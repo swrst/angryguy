@@ -8,7 +8,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <!--
+      Targets whatever .NET version the installed SDK ships, so this builds with
+      zero downloads on a .NET 8 machine and a .NET 10 machine alike. Hardcoding
+      net8.0 fails with NU1100 on an SDK that has no .NET 8 reference packs.
+    -->
+    <TargetFramework>net$(BundledNETCoreAppTargetFrameworkVersion)</TargetFramework>
     <LangVersion>9.0</LangVersion>
     <RootNamespace>AngryGuy.Headless</RootNamespace>
     <AssemblyName>AngryGuy.Headless</AssemblyName>

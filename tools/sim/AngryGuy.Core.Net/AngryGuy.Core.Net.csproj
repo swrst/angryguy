@@ -10,10 +10,21 @@
     LangVersion is pinned to 9.0 because that is what Unity 6 supports. If
     someone writes C# 10+ syntax in the core, this project fails to build and
     catches it before Unity ever sees it.
+
+    Note: this used to target netstandard2.1 to also police the BCL surface
+    Unity exposes, but that forces a NuGet download of the netstandard ref pack
+    and broke the build on a machine with only the .NET 10 SDK. Syntax is still
+    guarded by LangVersion; API surface is not, so stick to ordinary BCL types
+    (List, Dictionary, Math, string) in Core and let Unity be the final word.
   -->
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <!--
+      Targets whatever .NET version the installed SDK ships, so this builds with
+      zero downloads on a .NET 8 machine and a .NET 10 machine alike. Hardcoding
+      net8.0 fails with NU1100 on an SDK that has no .NET 8 reference packs.
+    -->
+    <TargetFramework>net$(BundledNETCoreAppTargetFrameworkVersion)</TargetFramework>
     <LangVersion>9.0</LangVersion>
     <AssemblyName>AngryGuy.Core</AssemblyName>
     <RootNamespace>AngryGuy.Core</RootNamespace>
