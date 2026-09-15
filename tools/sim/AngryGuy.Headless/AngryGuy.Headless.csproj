@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plays the game in a terminal against the same simulation Unity will run.
+    Useful for tuning AI numbers without waiting on an editor, and for watching
+    the NPCs live their lives with no player interference at all.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>AngryGuy.Headless</RootNamespace>
+    <AssemblyName>AngryGuy.Headless</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../AngryGuy.Core.Net/AngryGuy.Core.Net.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles the EXACT SAME source files Unity compiles, straight out of
+    Assets/AngryGuy/Core. There is no copy and no DLL to keep in sync: this
+    project is just a second compiler pointed at the same code, so the AI can
+    be tested and run in plain .NET while Unity remains the only place that
+    renders it.
+
+    LangVersion is pinned to 9.0 because that is what Unity 6 supports. If
+    someone writes C# 10+ syntax in the core, this project fails to build and
+    catches it before Unity ever sees it.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>AngryGuy.Core</AssemblyName>
+    <RootNamespace>AngryGuy.Core</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../unity/Assets/AngryGuy/Core/**/*.cs" />
+  </ItemGroup>
+
+</Project>

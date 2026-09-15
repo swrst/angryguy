@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Deliberately a plain console app with a hand-rolled assert helper instead of
+    xUnit/NUnit: zero NuGet dependencies means `dotnet run` works on any machine
+    with the SDK, offline, with no restore step. Swap in a real test framework
+    when the suite outgrows this.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>AngryGuy.Tests</RootNamespace>
+    <AssemblyName>AngryGuy.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../AngryGuy.Core.Net/AngryGuy.Core.Net.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,629 @@
+using System;
+using System.Collections.Generic;
+using AngryGuy.Core;
+
+namespace AngryGuy.Tests
+{
+    public static class Program
+    {
+        private static int _passed;
+        private static int _failed;
+
+        public static int Main(string[] args)
+        {
+            Console.WriteLine("AngryGuy simulation tests");
+            Console.WriteLine("=========================");
+
+            Test("Vec3 distance ignores height", Vec3FlatDistance);
+            Test("RNG is deterministic per seed", RngDeterminism);
+            Test("Need urgency is non-linear", NeedUrgency);
+
+            Test("Utility AI chooses the most urgent need", UtilityPicksUrgentNeed);
+            Test("Utility AI ignores sabotage affordances", UtilityIgnoresSabotage);
+            Test("Hidden faults are still advertised, and fail on arrival", HiddenFaultsAdvertiseAnyway);
+            Test("Visible state is respected when planning", VisibleStateRespectedWhenPlanning);
+            Test("Utility AI backs off after a failure", UtilityAvoidsFailedObject);
+
+            Test("Removing the pan makes the chef's plan fail", SabotageCausesPlanFailure);
+            Test("A failed plan makes the NPC angrier", PlanFailureRaisesAnger);
+            Test("Repeated failures escalate", FrustrationEscalates);
+
+            Test("Blame lands on whoever was seen nearby", BlameUsesOpportunity);
+            Test("No evidence means no suspect", BlameNeedsEvidence);
+            Test("Paranoid NPCs blame on thinner evidence", ParanoiaLowersBar);
+            Test("Disliked NPCs are easier to blame", MotiveAffectsBlame);
+
+            Test("Gossip spreads suspicion between NPCs", GossipSpreadsSuspicion);
+            Test("Memory fades over time", MemoryDecays);
+
+            Test("Delayed effects fire on schedule", DelayedEffectsFire);
+            Test("Being watched while sabotaging raises suspicion", SeenSabotageRaisesSuspicion);
+            Test("Sabotaging unobserved raises no suspicion", UnseenSabotageIsClean);
+
+            Test("Walls block line of sight", WallsBlockSight);
+            Test("Same seed produces the same run", RunDeterminism);
+
+            Test("End to end: the chef can be driven furious", EndToEndAngerRises);
+            Test("End to end: a clean run stays unsuspected", EndToEndStaysClean);
+
+            Console.WriteLine();
+            Console.WriteLine("-------------------------");
+            Console.WriteLine("passed: " + _passed + "   failed: " + _failed);
+            return _failed == 0 ? 0 : 1;
+        }
+
+        // ------------------------------------------------------------------
+        // Primitives
+        // ------------------------------------------------------------------
+
+        private static void Vec3FlatDistance()
+        {
+            Vec3 a = new Vec3(0f, 0f, 0f);
+            Vec3 b = new Vec3(3f, 99f, 4f);
+            AssertNear(5f, Vec3.FlatDistance(a, b), 0.001f, "flat distance");
+        }
+
+        private static void RngDeterminism()
+        {
+            Rng a = new Rng(1234);
+            Rng b = new Rng(1234);
+            for (int i = 0; i < 50; i++)
+            {
+                AssertNear(a.NextFloat(), b.NextFloat(), 0.000001f, "same seed, same stream");
+            }
+
+            Rng c = new Rng(9999);
+            Rng d = new Rng(1234);
+            bool differs = false;
+            for (int i = 0; i < 20 && !differs; i++)
+            {
+                if (Math.Abs(c.NextFloat() - d.NextFloat()) > 0.0001f) differs = true;
+            }
+            AssertTrue(differs, "different seeds diverge");
+        }
+
+        private static void NeedUrgency()
+        {
+            float nearlyFull = Mathx.Urgency(0.9f);
+            float empty = Mathx.Urgency(0.1f);
+            AssertTrue(empty > nearlyFull * 5f,
+                "an empty need should dominate a nearly full one (got " + empty + " vs " + nearlyFull + ")");
+        }
+
+        // ------------------------------------------------------------------
+        // Utility AI
+        // ------------------------------------------------------------------
+
+        private static void UtilityPicksUrgentNeed()
+        {
+            Simulation sim = KitchenLevel.Build(1);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // Desperate for the toilet, everything else fine.
+            for (int i = 0; i < Needs.Count; i++) terry.Needs.Set((NeedType)i, 0.95f);
+            terry.Needs.Set(NeedType.Bladder, 0.02f);
+
+            List<ScoredOption> options = UtilityAi.ScoreAll(terry, sim.World, sim.Time);
+            AssertTrue(options.Count > 0, "should find something to do");
+            AssertEqual(KitchenLevel.Ids.Toilet, options[0].Object.Id,
+                "top option should be the toilet, was " + options[0]);
+        }
+
+        private static void UtilityIgnoresSabotage()
+        {
+            Simulation sim = KitchenLevel.Build(2);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            List<ScoredOption> options = UtilityAi.ScoreAll(chef, sim.World, sim.Time);
+            for (int i = 0; i < options.Count; i++)
+            {
+                AssertTrue(!options[i].Affordance.IsSabotage,
+                    "NPCs must never consider sabotage verbs: " + options[i]);
+            }
+        }
+
+        /// <summary>
+        /// A blocked toilet looks perfectly normal from across the room. Terry
+        /// must still choose it, walk over, and only then find out - otherwise
+        /// sabotage silently does nothing.
+        /// </summary>
+        private static void HiddenFaultsAdvertiseAnyway()
+        {
+            Simulation sim = KitchenLevel.Build(3);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+            for (int i = 0; i < Needs.Count; i++) terry.Needs.Set((NeedType)i, 0.95f);
+            terry.Needs.Set(NeedType.Bladder, 0.02f);
+
+            SmartObject toilet = sim.World.GetObject(KitchenLevel.Ids.Toilet);
+            toilet.SetState(StateKeys.Broken, 1f);
+
+            Affordance use = FindAffordance(toilet, "use_toilet");
+            AssertTrue(use.AdvertisedTo(toilet, terry),
+                "a blocked toilet should still look usable from a distance");
+            AssertTrue(!use.AvailableFor(toilet, terry),
+                "but it must fail the check once he is standing at it");
+
+            List<ScoredOption> options = UtilityAi.ScoreAll(terry, sim.World, sim.Time);
+            AssertEqual(KitchenLevel.Ids.Toilet, options[0].Object.Id,
+                "he should still head for the toilet, was " + options[0]);
+        }
+
+        /// <summary>
+        /// The opposite case: state anyone can see from anywhere must be
+        /// respected when planning, or NPCs generate nonsense failures.
+        /// </summary>
+        private static void VisibleStateRespectedWhenPlanning()
+        {
+            Simulation sim = KitchenLevel.Build(3);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+            SmartObject bin = sim.World.GetObject(KitchenLevel.Ids.Bin);
+
+            Affordance empty = FindAffordance(bin, "empty_bin");
+            AssertTrue(empty.AdvertisedTo(bin, eva), "a full bin advertises emptying");
+
+            bin.SetState(StateKeys.Dirty, 0f);
+            AssertTrue(!empty.AdvertisedTo(bin, eva),
+                "an already-empty bin must not be advertised - that is not sabotage, just state");
+        }
+
+        private static void UtilityAvoidsFailedObject()
+        {
+            Simulation sim = KitchenLevel.Build(4);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+            for (int i = 0; i < Needs.Count; i++) terry.Needs.Set((NeedType)i, 0.95f);
+            terry.Needs.Set(NeedType.Bladder, 0.02f);
+
+            List<ScoredOption> before = UtilityAi.ScoreAll(terry, sim.World, sim.Time);
+            float scoreBefore = TopScoreFor(before, KitchenLevel.Ids.Toilet);
+
+            terry.AvoidUntil[KitchenLevel.Ids.Toilet] = sim.Time + 20f;
+
+            List<ScoredOption> after = UtilityAi.ScoreAll(terry, sim.World, sim.Time);
+            float scoreAfter = TopScoreFor(after, KitchenLevel.Ids.Toilet);
+
+            AssertTrue(scoreAfter < scoreBefore,
+                "recently failed objects should score lower (" + scoreBefore + " -> " + scoreAfter + ")");
+        }
+
+        private static float TopScoreFor(List<ScoredOption> options, string objectId)
+        {
+            for (int i = 0; i < options.Count; i++)
+            {
+                if (options[i].Object.Id == objectId) return options[i].Score;
+            }
+            return 0f;
+        }
+
+        // ------------------------------------------------------------------
+        // Sabotage -> frustration -> anger
+        // ------------------------------------------------------------------
+
+        private static void SabotageCausesPlanFailure()
+        {
+            Simulation sim = KitchenLevel.Build(5);
+            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+            SmartObject pan = sim.World.GetObject(KitchenLevel.Ids.Pan);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            Affordance cook = FindAffordance(stove, "cook");
+            AssertTrue(cook.AvailableFor(stove, chef), "cooking should be possible to start with");
+
+            pan.Concealed = true;
+            AssertTrue(!cook.AvailableFor(stove, chef), "hiding the pan should make cooking impossible");
+        }
+
+        private static void PlanFailureRaisesAnger()
+        {
+            Simulation sim = KitchenLevel.Build(6);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            SmartObject pan = sim.World.GetObject(KitchenLevel.Ids.Pan);
+
+            chef.Needs.Set(NeedType.Comfort, 0.02f);
+
+            // The pan vanishes before he gets there.
+            pan.Concealed = true;
+            pan.HeldBy = PlayerAvatar.PlayerId;
+
+            RunFor(sim, 40f);
+
+            // Peak, not current: anger decays, and a single frustration should not
+            // still be burning forty seconds later.
+            AssertTrue(chef.PeakAnger > 0.02f,
+                "chef should have spiked when his plan collapsed (peak " + chef.PeakAnger + ")");
+            AssertTrue(HasEvent(sim, EventKind.PlanFailed), "a PlanFailed event should have been published");
+        }
+
+        private static void FrustrationEscalates()
+        {
+            Npc npc = new Npc { Id = "n", Name = "N", Personality = Personality.Chef() };
+            npc.Needs.Set(NeedType.Hunger, 0.1f);
+
+            float first = AngerModel.PlanFailure(npc, NeedType.Hunger);
+            float second = AngerModel.PlanFailure(npc, NeedType.Hunger);
+            float third = AngerModel.PlanFailure(npc, NeedType.Hunger);
+
+            AssertTrue(second > first && third > second,
+                "each successive failure should hurt more (" + first + ", " + second + ", " + third + ")");
+        }
+
+        // ------------------------------------------------------------------
+        // Blame
+        // ------------------------------------------------------------------
+
+        private static void BlameUsesOpportunity()
+        {
+            Simulation sim = KitchenLevel.Build(7);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            sim.Time = 100f;
+
+            Vec3 scene = new Vec3(-6f, 0f, 3f);
+            chef.Memory.RecordSighting(KitchenLevel.Ids.Waiter, scene, 95f, 0f);
+
+            WorldEvent anomaly = new WorldEvent
+            {
+                Kind = EventKind.ObjectBroken,
+                Position = scene,
+                Time = 96f,
+                ObjectId = KitchenLevel.Ids.Stove,
+                VictimId = chef.Id,
+                Severity = 0.8f
+            };
+
+            BlameResult blame = BlameResolver.Resolve(chef, anomaly, sim);
+            AssertTrue(blame.HasSuspect, "someone was standing right there; he should have a suspect");
+            AssertEqual(KitchenLevel.Ids.Waiter, blame.SuspectId, "should blame the person he saw");
+        }
+
+        private static void BlameNeedsEvidence()
+        {
+            Simulation sim = KitchenLevel.Build(8);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+            terry.Relationships.Clear();
+            sim.Time = 100f;
+
+            WorldEvent anomaly = new WorldEvent
+            {
+                Kind = EventKind.ObjectBroken,
+                Position = new Vec3(-6f, 0f, 3f),
+                Time = 96f,
+                ObjectId = KitchenLevel.Ids.Stove,
+                Severity = 0.5f
+            };
+
+            BlameResult blame = BlameResolver.Resolve(terry, anomaly, sim);
+            AssertTrue(!blame.HasSuspect,
+                "a trusting NPC with no sightings should assume an accident, blamed " + blame.SuspectId);
+        }
+
+        private static void ParanoiaLowersBar()
+        {
+            Simulation sim = KitchenLevel.Build(9);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+            sim.Time = 100f;
+
+            Vec3 scene = new Vec3(0f, 0f, 0f);
+            WorldEvent anomaly = new WorldEvent
+            {
+                Kind = EventKind.ObjectBroken,
+                Position = scene,
+                Time = 96f,
+                ObjectId = KitchenLevel.Ids.Stove,
+                Severity = 0.5f
+            };
+
+            // Both saw the same weak thing: someone was vaguely in the area a while ago.
+            eva.Memory.RecordSighting(PlayerAvatar.PlayerId, new Vec3(4f, 0f, 3f), 80f, 0f);
+            terry.Memory.RecordSighting(PlayerAvatar.PlayerId, new Vec3(4f, 0f, 3f), 80f, 0f);
+
+            BlameResult evaBlame = BlameResolver.Resolve(eva, anomaly, sim);
+            BlameResult terryBlame = BlameResolver.Resolve(terry, anomaly, sim);
+
+            AssertTrue(!terryBlame.HasSuspect || evaBlame.HasSuspect,
+                "the paranoid manager should never be harder to convince than the trusting dishwasher");
+        }
+
+        private static void MotiveAffectsBlame()
+        {
+            Simulation sim = KitchenLevel.Build(10);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            sim.Time = 100f;
+
+            Vec3 scene = new Vec3(-6f, 0f, 3f);
+            chef.Memory.RecordSighting(KitchenLevel.Ids.Waiter, scene, 95f, 0f);
+            chef.Memory.RecordSighting(KitchenLevel.Ids.Dishwasher, scene, 95f, 0f);
+
+            WorldEvent anomaly = new WorldEvent
+            {
+                Kind = EventKind.ObjectBroken,
+                Position = scene,
+                Time = 96f,
+                ObjectId = KitchenLevel.Ids.Stove,
+                VictimId = chef.Id,
+                Severity = 0.8f
+            };
+
+            // Gordon dislikes Terry out of the box, so with equal opportunity
+            // Terry should carry more of the blame more often.
+            int terryBlamed = 0;
+            for (int i = 0; i < 40; i++)
+            {
+                BlameResult blame = BlameResolver.Resolve(chef, anomaly, sim);
+                if (blame.SuspectId == KitchenLevel.Ids.Dishwasher) terryBlamed++;
+            }
+
+            AssertTrue(terryBlamed > 20,
+                "the disliked dishwasher should usually take the blame (" + terryBlamed + "/40)");
+        }
+
+        // ------------------------------------------------------------------
+        // Social
+        // ------------------------------------------------------------------
+
+        private static void GossipSpreadsSuspicion()
+        {
+            Simulation sim = KitchenLevel.Build(11);
+            Npc marie = sim.World.GetNpc(KitchenLevel.Ids.Waiter);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            marie.AddSuspicion(PlayerAvatar.PlayerId, 0.8f);
+            float before = terry.SuspicionOf(PlayerAvatar.PlayerId);
+
+            Gossip.Exchange(marie, terry, sim);
+
+            AssertTrue(terry.SuspicionOf(PlayerAvatar.PlayerId) > before,
+                "Terry should pick up Marie's suspicion (" + terry.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        private static void MemoryDecays()
+        {
+            NpcMemory memory = new NpcMemory();
+            memory.Remember(new MemoryEntry
+            {
+                Kind = EventKind.ObjectBroken,
+                ObjectId = "stove",
+                When = 0f,
+                Confidence = 1f
+            });
+
+            for (int i = 0; i < 400; i++) memory.Tick(0.5f, 0.0f, i * 0.5f);
+
+            AssertTrue(memory.Entries.Count == 0, "a low-grudge NPC should eventually forget");
+        }
+
+        // ------------------------------------------------------------------
+        // Player
+        // ------------------------------------------------------------------
+
+        private static void DelayedEffectsFire()
+        {
+            Simulation sim = KitchenLevel.Build(12);
+            bool fired = false;
+            sim.Schedule(5f, "test", delegate(Simulation s) { fired = true; });
+
+            RunFor(sim, 4f);
+            AssertTrue(!fired, "should not fire early");
+
+            RunFor(sim, 2f);
+            AssertTrue(fired, "should fire after the delay");
+        }
+
+        private static void SeenSabotageRaisesSuspicion()
+        {
+            Simulation sim = KitchenLevel.Build(13);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+            SmartObject salt = sim.World.GetObject(KitchenLevel.Ids.Salt);
+
+            // Put the manager right next to the player, staring at them.
+            sim.Player.Position = salt.Position;
+            eva.Position = new Vec3(salt.Position.X + 1.5f, 0f, salt.Position.Z);
+            eva.Facing = (sim.Player.Position - eva.Position).Normalized;
+
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Salt, "swap_salt"), "swap should succeed");
+            AssertTrue(eva.SuspicionOf(PlayerAvatar.PlayerId) > 0.1f,
+                "doing it in full view should be noticed (" + eva.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        private static void UnseenSabotageIsClean()
+        {
+            Simulation sim = KitchenLevel.Build(14);
+            SmartObject salt = sim.World.GetObject(KitchenLevel.Ids.Salt);
+
+            // Move everyone far away and face them at a wall.
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                sim.World.Npcs[i].Position = new Vec3(8f, 0f, 8f);
+                sim.World.Npcs[i].Facing = new Vec3(1f, 0f, 0f);
+            }
+
+            sim.Player.Position = salt.Position;
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Salt, "swap_salt"), "swap should succeed");
+
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                AssertNear(0f, sim.World.Npcs[i].SuspicionOf(PlayerAvatar.PlayerId), 0.001f,
+                    sim.World.Npcs[i].Name + " saw nothing and should suspect nothing");
+            }
+        }
+
+        private static void WallsBlockSight()
+        {
+            Simulation sim = KitchenLevel.Build(15);
+
+            // Straight across the dividing wall, away from the doorway.
+            Vec3 kitchenSide = new Vec3(-3f, 0f, 6f);
+            Vec3 diningSide = new Vec3(3f, 0f, 6f);
+            AssertTrue(!sim.World.HasLineOfSight(kitchenSide, diningSide), "the wall should block sight");
+
+            // Through the doorway gap.
+            AssertTrue(sim.World.HasLineOfSight(new Vec3(-3f, 0f, 0f), new Vec3(3f, 0f, 0f)),
+                "the doorway should be see-through");
+        }
+
+        private static void RunDeterminism()
+        {
+            Simulation a = KitchenLevel.Build(4242);
+            Simulation b = KitchenLevel.Build(4242);
+
+            RunFor(a, 90f);
+            RunFor(b, 90f);
+
+            AssertEqual(a.Events.Log.Count.ToString(), b.Events.Log.Count.ToString(),
+                "same seed should produce the same number of events");
+
+            Npc chefA = a.World.GetNpc(KitchenLevel.Ids.Chef);
+            Npc chefB = b.World.GetNpc(KitchenLevel.Ids.Chef);
+            AssertNear(chefA.Anger, chefB.Anger, 0.0001f, "same seed should produce the same anger");
+        }
+
+        // ------------------------------------------------------------------
+        // End to end
+        // ------------------------------------------------------------------
+
+        private static void EndToEndAngerRises()
+        {
+            Simulation sim = KitchenLevel.Build(77);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            PerfectCrime(sim);
+            RunFor(sim, 240f);
+
+            AssertTrue(chef.PeakAnger > 0.85f,
+                "a full sabotage run should drive the chef to fury (peak " + chef.PeakAnger + ")");
+        }
+
+        private static void EndToEndStaysClean()
+        {
+            Simulation sim = KitchenLevel.Build(77);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            PerfectCrime(sim);
+            RunFor(sim, 240f);
+
+            AssertTrue(sim.Outcome != GameOutcome.Caught,
+                "sabotage done out of sight should not get the player caught");
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) < Simulation.BlownCoverThreshold,
+                "the chef should not be sure it was the player (" +
+                chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        /// <summary>
+        /// A scripted "everyone is looking the other way" run. Positions NPCs
+        /// away from each sabotage so the test exercises the consequence chain
+        /// rather than the player's stealth routing.
+        /// </summary>
+        private static void PerfectCrime(Simulation sim)
+        {
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            chef.Needs.Set(NeedType.Comfort, 0.05f);
+
+            ParkEveryoneInDining(sim);
+
+            // Everything here is aimed squarely at Gordon. Spraying sabotage
+            // around the level annoys four people slightly; the objective needs
+            // one person pushed over the edge.
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Salt).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Salt, "swap_salt");
+
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Stove).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Stove, "crank_heat");
+
+            // Take his pan and bury it in the bin: every attempt to cook now fails.
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Pan).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Pan, "take");
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Bin).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Bin, "stash");
+
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Oil).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Oil, "pour_oil");
+
+            Teleport(sim, sim.World.GetObject(KitchenLevel.Ids.Fridge).Position);
+            sim.PlayerInteract(KitchenLevel.Ids.Fridge, "empty_fridge");
+
+            // Retreat to the dining room and behave like a normal customer.
+            Teleport(sim, new Vec3(6f, 0f, -6f));
+        }
+
+        private static void ParkEveryoneInDining(Simulation sim)
+        {
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc npc = sim.World.Npcs[i];
+                npc.Position = new Vec3(6f + i * 0.4f, 0f, 6f);
+                npc.Facing = new Vec3(1f, 0f, 0f);
+            }
+        }
+
+        private static void Teleport(Simulation sim, Vec3 position)
+        {
+            sim.Player.Position = position;
+            sim.Player.MovementNoise = 0f;
+        }
+
+        // ------------------------------------------------------------------
+        // Harness
+        // ------------------------------------------------------------------
+
+        private static void RunFor(Simulation sim, float seconds, float dt = 0.1f)
+        {
+            int steps = (int)(seconds / dt);
+            for (int i = 0; i < steps; i++) sim.Tick(dt);
+        }
+
+        private static bool HasEvent(Simulation sim, EventKind kind)
+        {
+            IReadOnlyList<WorldEvent> log = sim.Events.Log;
+            for (int i = 0; i < log.Count; i++)
+            {
+                if (log[i].Kind == kind) return true;
+            }
+            return false;
+        }
+
+        private static Affordance FindAffordance(SmartObject obj, string id)
+        {
+            for (int i = 0; i < obj.Affordances.Count; i++)
+            {
+                if (obj.Affordances[i].Id == id) return obj.Affordances[i];
+            }
+            throw new Exception("no affordance '" + id + "' on " + obj.Name);
+        }
+
+        private static void Test(string name, Action body)
+        {
+            try
+            {
+                body();
+                _passed++;
+                Console.WriteLine("  PASS  " + name);
+            }
+            catch (Exception e)
+            {
+                _failed++;
+                Console.WriteLine("  FAIL  " + name);
+                Console.WriteLine("        " + e.Message);
+            }
+        }
+
+        private static void AssertTrue(bool condition, string message)
+        {
+            if (!condition) throw new Exception(message);
+        }
+
+        private static void AssertEqual(string expected, string actual, string message)
+        {
+            if (expected != actual)
+            {
+                throw new Exception(message + " (expected '" + expected + "', got '" + actual + "')");
+            }
+        }
+
+        private static void AssertNear(float expected, float actual, float tolerance, string message)
+        {
+            if (Math.Abs(expected - actual) > tolerance)
+            {
+                throw new Exception(message + " (expected " + expected + ", got " + actual + ")");
+            }
+        }
+    }
+}

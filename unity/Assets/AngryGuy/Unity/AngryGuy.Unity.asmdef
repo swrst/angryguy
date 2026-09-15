@@ -1,0 +1,16 @@
+{
+    "name": "AngryGuy.Unity",
+    "rootNamespace": "AngryGuy.UnityLayer",
+    "references": [
+        "AngryGuy.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

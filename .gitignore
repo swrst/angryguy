@@ -1,0 +1,50 @@
+## Unity generated folders
+unity/[Ll]ibrary/
+unity/[Tt]emp/
+unity/[Oo]bj/
+unity/[Bb]uild/
+unity/[Bb]uilds/
+unity/[Ll]ogs/
+unity/[Uu]ser[Ss]ettings/
+unity/[Mm]emoryCaptures/
+unity/[Rr]ecordings/
+
+## Unity3D generated meta files for folders we do not track
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+## Unity3D generated project files
+unity/*.csproj
+unity/*.unityproj
+unity/*.sln
+unity/*.suo
+unity/*.tmp
+unity/*.user
+unity/*.userprefs
+unity/*.pidb
+unity/*.booproj
+unity/*.svd
+unity/*.pdb
+unity/*.mdb
+unity/*.opendb
+unity/*.VC.db
+
+## Unity crash reports
+unity/sysinfo.txt
+unity/crashlytics-build.properties
+
+## .NET / Rider build output for the simulation tools
+tools/sim/**/bin/
+tools/sim/**/obj/
+tools/sim/*.user
+
+## IDE
+.idea/
+.vs/
+.vscode/
+*.DotSettings.user
+
+## OS
+.DS_Store
+Thumbs.db

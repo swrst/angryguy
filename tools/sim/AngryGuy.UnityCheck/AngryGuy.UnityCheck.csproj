@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Type-checks the Unity presentation layer without Unity installed, by
+    compiling it against the minimal API stubs in UnityStubs.cs.
+
+    This catches the errors that are otherwise only found by opening the editor:
+    misspelled members, wrong argument counts, wrong types. It does NOT prove the
+    game behaves correctly in Unity - only that the code compiles.
+
+    Never shipped, never run. Build only.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>AngryGuy.UnityCheck</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- CS0660/0661: stub Object defines == without Equals overrides. Irrelevant here. -->
+    <NoWarn>0660;0661;0649;0414</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="UnityStubs.cs" />
+    <Compile Include="../../../unity/Assets/AngryGuy/Unity/**/*.cs" />
+    <Compile Include="../../../unity/Assets/AngryGuy/Editor/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../AngryGuy.Core.Net/AngryGuy.Core.Net.csproj" />
+  </ItemGroup>
+
+</Project>
