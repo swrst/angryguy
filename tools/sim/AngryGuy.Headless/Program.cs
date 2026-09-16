@@ -54,15 +54,34 @@ namespace AngryGuy.Headless
                 if (args[i].ToLowerInvariant().TrimStart('-') == "crime") crimeMode = true;
             }
 
-            _sim = KitchenLevel.Build(seed);
-            Console.WriteLine("ANGRY GUY - kitchen prototype (seed " + seed + ")");
+            // The kitchen is the old systems sandbox and still useful for
+            // stress-testing six NPCs at once. Marking Hour is the actual game.
+            bool kitchen = false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i].ToLowerInvariant().TrimStart('-') == "kitchen") kitchen = true;
+            }
+
+            if (kitchen)
+            {
+                _sim = KitchenLevel.Build(seed);
+                Console.WriteLine("ANGRY GUY - kitchen sandbox (seed " + seed + ")");
+            }
+            else
+            {
+                _sim = MarkingHour.Build(seed);
+                PrintBriefing();
+            }
             Console.WriteLine();
 
+            if (crimeMode && !kitchen)
+            {
+                Console.WriteLine("  (crime mode is the kitchen sandbox - add --kitchen)");
+                return 1;
+            }
             if (crimeMode) return Crime(watchSeconds);
             if (watchOnly) return Watch(watchSeconds);
 
-            Console.WriteLine("Objective: make Gordon the chef furious, without anyone deciding it was you.");
-            Console.WriteLine("Then leave through the back door.");
             Console.WriteLine("Type 'help' for commands.");
             Console.WriteLine();
 
@@ -258,6 +277,8 @@ namespace AngryGuy.Headless
                     case "who": PrintWho(); break;
                     case "log": PrintLog(); break;
                     case "traps": case "setup": case "plans": PrintTraps(); break;
+                    case "jobs": case "todo": case "list": PrintJobs(); break;
+                    case "brief": PrintBriefing(); break;
                     case "go": Go(arg); break;
                     case "use": Use(arg); break;
                     case "wait": Wait(arg); break;
@@ -316,6 +337,7 @@ namespace AngryGuy.Headless
             Console.WriteLine("  wait <sec>     stand still and let things happen");
             Console.WriteLine("  throw          lob whatever you are holding - noise lands over there");
             Console.WriteLine("  hide           duck into a hiding spot you are standing next to");
+            Console.WriteLine("  jobs           the to-do list");
             Console.WriteLine("  traps          what you've set up, and whether it's still armed");
             Console.WriteLine("  who            what every NPC is feeling and doing");
             Console.WriteLine("  log            recent events");
@@ -425,6 +447,61 @@ namespace AngryGuy.Headless
         /// you which of yours are still live - otherwise you spend the level
         /// waiting on sabotage that was mopped up four minutes ago.
         /// </summary>
+        /// <summary>The answering machine. Forty seconds of story, no cutscene.</summary>
+        private static void PrintBriefing()
+        {
+            Contract c = _sim.Contract;
+            if (c == null) return;
+
+            Console.WriteLine();
+            Console.WriteLine("  LAST STRAW — " + c.Title.ToUpperInvariant());
+            Console.WriteLine("  " + new string('-', 52));
+            Console.WriteLine("  Client: " + c.Client);
+            Console.WriteLine();
+            foreach (string line in Wrap(c.Brief, 52)) Console.WriteLine("    \"" + line + "\"");
+            Console.WriteLine();
+            PrintJobs();
+        }
+
+        private static IEnumerable<string> Wrap(string text, int width)
+        {
+            string[] words = text.Split(' ');
+            string line = "";
+            foreach (string w in words)
+            {
+                if (line.Length + w.Length + 1 > width)
+                {
+                    yield return line;
+                    line = w;
+                }
+                else line = line.Length == 0 ? w : line + " " + w;
+            }
+            if (line.Length > 0) yield return line;
+        }
+
+        /// <summary>
+        /// The to-do list. Every line names an outcome and never a method, which
+        /// is the whole reason the structure works.
+        /// </summary>
+        private static void PrintJobs()
+        {
+            Contract c = _sim.Contract;
+            if (c == null)
+            {
+                Console.WriteLine("  No contract on this level.");
+                return;
+            }
+
+            Console.WriteLine("  TO DO:");
+            for (int i = 0; i < c.Jobs.Count; i++)
+            {
+                Job job = c.Jobs[i];
+                string box = job.Done ? "[x]" : "[ ]";
+                string star = job.Required ? " *CONTRACT*" : "";
+                Console.WriteLine("   " + box + " " + job.Display + star);
+            }
+        }
+
         private static void PrintTraps()
         {
             IReadOnlyList<Trap> traps = _sim.Traps.All;

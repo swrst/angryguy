@@ -125,11 +125,28 @@ namespace AngryGuy.Core
     public sealed class FeedbackQueue
     {
         private readonly List<FeedbackEvent> _pending = new List<FeedbackEvent>();
+        private readonly List<FeedbackEvent> _history = new List<FeedbackEvent>();
+
+        /// <summary>
+        /// Everything that has happened, kept after draining.
+        ///
+        /// Drain() empties the queue as the HUD consumes it, which is right for
+        /// display and useless for the caught screen - by the time the player is
+        /// rumbled, the events that rumbled them have long since been shown and
+        /// thrown away. The history is what lets us hand them the case file.
+        /// </summary>
+        public IReadOnlyList<FeedbackEvent> History
+        {
+            get { return _history; }
+        }
 
         public void Push(FeedbackEvent e)
         {
             _pending.Add(e);
             if (_pending.Count > 64) _pending.RemoveAt(0);
+
+            _history.Add(e);
+            if (_history.Count > 256) _history.RemoveAt(0);
         }
 
         /// <summary>Takes everything queued and clears it.</summary>

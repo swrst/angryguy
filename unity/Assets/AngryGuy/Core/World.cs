@@ -94,6 +94,12 @@ namespace AngryGuy.Core
         {
             Npcs.Add(npc);
             _npcsById[npc.Id] = npc;
+
+            // Preconditions get an NPC but no simulation, and some of them need
+            // to ask about a different object ("is his pen still on the desk?").
+            // A back-reference is a great deal cleaner than the static that was
+            // the alternative.
+            npc.World = this;
         }
 
         public SmartObject GetObject(string id)

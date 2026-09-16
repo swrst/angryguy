@@ -36,7 +36,7 @@ namespace AngryGuy.UnityLayer
             root.transform.SetParent(parent, false);
             _root = root.transform;
 
-            BuildLighting();
+            StageLighting.Apply(_root);
             BuildFloors(sim);
             BuildWalls(sim);
             BuildZones(sim);
@@ -270,6 +270,7 @@ namespace AngryGuy.UnityLayer
                 _npcViews[npc.Id] = new NpcView
                 {
                     Rig = rig,
+                    Npc = npc,
                     Uniform = uniform,
                     Skin = skin,
                     Cone = BuildVisionCone(rig.Root)
@@ -357,9 +358,42 @@ namespace AngryGuy.UnityLayer
                                && npc.CurrentPlan.Target.HasTag(Tags.Seat);
 
                 view.Rig.Pose(npc.Position, npc.Facing, npc.Activity, npc.Anger, sitting, dt,
-                    _materials, view.Uniform, view.Skin);
+                    _materials, view.Uniform, view.Skin, npc);
 
+                TriggerReactions(view, npc);
                 UpdateCone(view.Cone, npc, sim);
+            }
+        }
+
+        /// <summary>
+        /// Fire a physical reaction when the simulation's state jumps.
+        ///
+        /// The rig cannot see events, only state, so this watches for the edges:
+        /// the frame an NPC starts noticing something, and the frame their anger
+        /// takes a real step up. Those are the two moments that deserve a
+        /// double-take and a held pose, and they are the difference between a
+        /// character reacting and a number changing.
+        /// </summary>
+        private void TriggerReactions(NpcView view, Npc npc)
+        {
+            bool noticing = npc.Attention.Noticing;
+
+            if (noticing && !view.WasNoticing)
+            {
+                view.Rig.React(Reaction.Startle, 0.7f);
+            }
+            view.WasNoticing = noticing;
+
+            float jump = npc.Anger - view.LastAnger;
+            view.LastAnger = npc.Anger;
+
+            if (jump > 0.12f)
+            {
+                // The bigger the grievance, the harder the reaction - and at the
+                // boiling point it stops being a double-take and becomes rage.
+                view.Rig.React(
+                    npc.Anger >= AngerModel.BoilingPoint ? Reaction.Rage : Reaction.Dismay,
+                    0.7f + jump * 2.2f);
             }
         }
 
@@ -478,6 +512,15 @@ namespace AngryGuy.UnityLayer
         public LineRenderer Cone;
         public Color Uniform;
         public Color Skin;
+
+        /// <summary>The simulation NPC, so the rig can read attention and mood.</summary>
+        public Npc Npc;
+
+        /// <summary>Last anger seen, to spot the jump that deserves a reaction.</summary>
+        public float LastAnger;
+
+        /// <summary>Whether they were mid-notice last frame.</summary>
+        public bool WasNoticing;
     }
 
     /// <summary>
@@ -515,6 +558,33 @@ namespace AngryGuy.UnityLayer
         public Material Unlit(Color colour)
         {
             return Get(_unlit, _unlitShader, colour, null, Vector2.one);
+        }
+
+        /// <summary>
+        /// An unlit, alpha-cut material for the face atlas. Unlit on purpose:
+        /// eyes that fall into shadow stop reading, and the expression is the
+        /// most important thing on the character.
+        /// </summary>
+        public Material Cutout(Texture2D texture)
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Unlit")
+                            ?? Shader.Find("Unlit/Transparent Cutout")
+                            ?? Shader.Find("Sprites/Default")
+                            ?? _unlitShader;
+
+            Material material = new Material(shader);
+            material.mainTexture = texture;
+            material.color = Color.white;
+
+            // URP's Unlit needs telling; the built-in cutout shader already knows.
+            if (material.HasProperty("_Surface")) material.SetFloat("_Surface", 1f);
+            if (material.HasProperty("_Blend")) material.SetFloat("_Blend", 0f);
+            if (material.HasProperty("_AlphaClip")) material.SetFloat("_AlphaClip", 1f);
+            if (material.HasProperty("_Cutoff")) material.SetFloat("_Cutoff", 0.4f);
+
+            material.EnableKeyword("_ALPHATEST_ON");
+            material.renderQueue = 2450;
+            return material;
         }
 
         public Material Textured(string textureName, Color tint, Vector2 tiling)

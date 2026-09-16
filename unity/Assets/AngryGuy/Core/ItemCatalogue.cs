@@ -125,6 +125,7 @@ namespace AngryGuy.Core
             bin.WithAffordance(new Affordance
             {
                 Id = "stash",
+                ActId = Acts.Plant,
                 Verb = "Stash what you're holding in the",
                 Actors = ActorKind.Player,
                 Duration = 1.5f,
@@ -408,6 +409,7 @@ namespace AngryGuy.Core
             sw.WithAffordance(new Affordance
             {
                 Id = "lights_off",
+                ActId = Acts.Lights,
                 Verb = "Kill the lights at the",
                 Actors = ActorKind.Player,
                 IsSabotage = true,
@@ -436,6 +438,7 @@ namespace AngryGuy.Core
             sw.WithAffordance(new Affordance
             {
                 Id = "lights_on",
+                ActId = Acts.Lights,
                 Verb = "Put the lights back on at the",
                 Actors = ActorKind.Both,
                 Duration = 1.5f,
@@ -464,6 +467,7 @@ namespace AngryGuy.Core
             alarm.WithAffordance(new Affordance
             {
                 Id = "pull_alarm",
+                ActId = Acts.PullAlarm,
                 Verb = "Pull the",
                 Actors = ActorKind.Player,
                 IsSabotage = true,
@@ -509,6 +513,7 @@ namespace AngryGuy.Core
             bucket.WithAffordance(new Affordance
             {
                 Id = "kick_over",
+                ActId = Acts.Break,
                 Verb = "Kick over the",
                 Actors = ActorKind.Player,
                 IsSabotage = true,
@@ -536,6 +541,7 @@ namespace AngryGuy.Core
             plant.WithAffordance(new Affordance
             {
                 Id = "knock_over",
+                ActId = Acts.Break,
                 Verb = "Knock over the",
                 Actors = ActorKind.Player,
                 IsSabotage = true,
@@ -620,12 +626,35 @@ namespace AngryGuy.Core
             });
         }
 
+        /// <summary>
+        /// Give an object something an NPC can pointlessly do to it.
+        ///
+        /// The single cheapest fix for "the NPCs are stupid": an NPC with
+        /// nothing to want should be straightening a chair, not standing in the
+        /// middle of the room facing a wall. Costs one line per object and buys
+        /// back a level's worth of dead time.
+        /// </summary>
+        public static void AddBusywork(SmartObject obj, string verb, float duration)
+        {
+            obj.WithAffordance(new Affordance
+            {
+                Id = "busywork_" + obj.Id,
+                Verb = verb,
+                Actors = ActorKind.Npc,
+                IsBusywork = true,
+                Duration = duration,
+                BaseAppeal = 0.1f,
+                Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Order, 0.05f) }
+            });
+        }
+
         /// <summary>Take / throw / put down, for anything the player can pick up.</summary>
         public static void AddCarryVerbs(SmartObject obj, float takeIncrimination, float dropIncrimination)
         {
             obj.WithAffordance(new Affordance
             {
                 Id = "take",
+                ActId = Acts.Take,
                 Verb = "Take the",
                 Actors = ActorKind.Player,
                 Duration = 0.8f,
@@ -661,6 +690,7 @@ namespace AngryGuy.Core
             obj.WithAffordance(new Affordance
             {
                 Id = "throw",
+                ActId = Acts.Throw,
                 Verb = "Throw the",
                 Actors = ActorKind.Player,
                 Duration = 0.4f,
@@ -672,6 +702,7 @@ namespace AngryGuy.Core
             obj.WithAffordance(new Affordance
             {
                 Id = "drop",
+                ActId = Acts.Drop,
                 Verb = "Put down the",
                 Actors = ActorKind.Player,
                 Duration = 0.5f,
@@ -704,6 +735,7 @@ namespace AngryGuy.Core
             station.WithAffordance(new Affordance
             {
                 Id = "plant",
+                ActId = Acts.Plant,
                 Verb = "Plant what you're holding on",
                 Actors = ActorKind.Player,
                 IsSabotage = true,

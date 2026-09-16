@@ -76,6 +76,22 @@ namespace AngryGuy.Core
         public bool IsSabotage;
 
         /// <summary>
+        /// Filler. Never chosen to satisfy a need - only when an NPC would
+        /// otherwise be standing still. Utility AI ignores these entirely, so
+        /// they cannot distort anyone's actual priorities.
+        /// </summary>
+        public bool IsBusywork;
+
+        /// <summary>
+        /// Which act a witness sees when the player does this, from Acts.
+        /// Empty falls back to the affordance id, which keeps old content
+        /// working - but naming it explicitly is what decides whether the act
+        /// counts as brazen, and therefore whether a glance is enough to
+        /// convict.
+        /// </summary>
+        public string ActId = "";
+
+        /// <summary>
         /// Using this in view of someone is inherently incriminating.
         /// Scales how much suspicion a witness gains.
         /// </summary>

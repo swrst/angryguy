@@ -233,6 +233,62 @@ namespace AngryGuy.Core
             return "I'll deal with the " + obj.Name + ".";
         }
 
+        /// <summary>
+        /// The moment a careful person's vocabulary gives out. Kept mild - the
+        /// game is all-ages, and "a word he would tell a child off for" is
+        /// funnier coming from a deputy head than anything stronger would be.
+        /// </summary>
+        public static string Outburst(Npc npc)
+        {
+            if (npc.Mind.SuspectsSabotage) return "SOMEBODY IN THIS SCHOOL IS DOING THIS ON PURPOSE!";
+            if (npc.Personality.Tidiness > 0.8f) return "OH, BLOODY MARVELLOUS. BLOODY. MARVELLOUS.";
+            if (npc.Personality.Temper > 0.85f) return "THAT'S IT! I'VE HAD ENOUGH OF THIS PLACE!";
+            return "FOR GOD'S SAKE!";
+        }
+
+        private static readonly string[] Profanity = { "BLOODY", "GOD'S SAKE", "DAMN" };
+
+        public static bool IsProfane(string line)
+        {
+            string upper = line.ToUpperInvariant();
+            for (int i = 0; i < Profanity.Length; i++)
+            {
+                if (upper.Contains(Profanity[i])) return true;
+            }
+            return false;
+        }
+
+        public static string Noticing(Npc npc)
+        {
+            if (npc.Mind.SuspectsSabotage) return "...what now.";
+            if (npc.Personality.Observance > 0.7f) return "Hang on.";
+            if (npc.Personality.Temper > 0.7f) return "What.";
+            return "Hm?";
+        }
+
+        public static string SomeoneElsesProblem(Npc npc)
+        {
+            if (npc.Personality.Sociability > 0.7f) return "Someone'll get that.";
+            if (npc.Personality.Tidiness > 0.7f) return "Not my job, that.";
+            return "...";
+        }
+
+        public static string SawSomethingBrazen(Npc npc, Act act)
+        {
+            if (npc.Personality.Temper > 0.7f) return "OI. What do you think you're doing?";
+            if (npc.Personality.Paranoia > 0.7f) return "I saw that. I saw exactly that.";
+            if (npc.Personality.Observance < 0.3f) return "Was that... should you be doing that?";
+            return "Excuse me - what are you doing?";
+        }
+
+        public static string CannotFind(Npc npc, string what)
+        {
+            if (npc.Anger > 0.6f) return "WHERE is the " + what + "?!";
+            if (npc.Mind.SuspectsSabotage) return "The " + what + ". Of course. Of course it's gone.";
+            if (npc.Personality.Tidiness > 0.7f) return "It lives right here. It always lives right here.";
+            return "Where's my— I put it right here.";
+        }
+
         public static string ResentfulChore(Npc npc, SmartObject obj)
         {
             if (npc.Mind.SuspectsSabotage) return "I am not the cleaner. Somebody is taking the mick.";

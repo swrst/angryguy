@@ -57,6 +57,47 @@ namespace AngryGuy.Core
         /// <summary>What the player has set up and not yet seen pay off.</summary>
         public readonly TrapBoard Traps = new TrapBoard();
 
+        /// <summary>Stops the whole room reacting to one event in the same way.</summary>
+        public readonly ReactionTickets Tickets = new ReactionTickets();
+
+        /// <summary>The most recent act anyone performed, for debugging and the HUD.</summary>
+        public Act LastAct;
+
+        /// <summary>The brief: what the player is here to cause.</summary>
+        public Contract Contract;
+
+        /// <summary>What the player already knew coming into this attempt.</summary>
+        public LevelProgress Progress = new LevelProgress();
+
+        /// <summary>
+        /// Who reached certainty about the player, and off the back of what.
+        /// Kept so the caught screen can show the actual evidence rather than a
+        /// generic failure card - the player should finish a failed run knowing
+        /// exactly which of their moves was the mistake.
+        /// </summary>
+        public Npc CaughtBy;
+        public readonly List<FeedbackEvent> CaughtEvidence = new List<FeedbackEvent>();
+
+        /// <summary>
+        /// Named things that have happened this run, for jobs to test against.
+        ///
+        /// A job is a predicate over the world, and most of what a job wants to
+        /// know ("did he swear?", "did he look under the table?") is a moment
+        /// rather than a state. Flags are how a moment becomes checkable after
+        /// the fact.
+        /// </summary>
+        private readonly HashSet<string> _flags = new HashSet<string>();
+
+        public void NoteFlag(string flag)
+        {
+            _flags.Add(flag);
+        }
+
+        public bool HasFlag(string flag)
+        {
+            return _flags.Contains(flag);
+        }
+
         private readonly List<PlayerAction> _playerActions = new List<PlayerAction>();
 
         /// <summary>
@@ -129,6 +170,7 @@ namespace AngryGuy.Core
             // The building calms down if nothing else happens.
             Unease = Mathx.Clamp01(Unease - 0.006f * dt);
 
+            CheckJobs();
             CheckObjective();
 
             if (Time >= TimeLimit && Outcome == GameOutcome.InProgress)
@@ -242,6 +284,18 @@ namespace AngryGuy.Core
             npc.FumbleCooldown -= dt;
             npc.SpeechTimer -= dt;
             if (npc.SpeechTimer <= 0f) npc.Speech = "";
+
+            npc.Attention.Tick(dt);
+            if (npc.Attention.Noticing)
+            {
+                // The beat between clocking something and doing anything about
+                // it. Everything else is on hold: they are visibly registering
+                // it, and that half-second is what the player reads as a mind.
+                FaceToward(npc, npc.Attention.LookAt, dt);
+                return;
+            }
+
+            if (npc.Attention.PendingReason.Length > 0) FinishNotice(npc);
 
             PerceptionSample(npc, dt);
             TickBelonging(npc, dt);
@@ -412,6 +466,7 @@ namespace AngryGuy.Core
         {
             AlarmUntil = Time + seconds;
             _alarmWarned = false;
+            Tickets.Clear();
             Announce(FeedbackKind.Alert, string.Format(
                 "FIRE ALARM - the kitchen is yours for about {0:0} seconds", seconds));
 
@@ -478,6 +533,82 @@ namespace AngryGuy.Core
         /// spend the whole level in transit, never settle into a routine, and
         /// give the player nothing to read or exploit.
         /// </summary>
+        /// <summary>
+        /// Something small and plausible to be doing. Straightening a chair,
+        /// wiping a surface, flicking through the pile - actions that satisfy
+        /// almost nothing and exist purely so the room always looks inhabited.
+        /// </summary>
+        private bool TryBusywork(Npc npc)
+        {
+            SmartObject best = null;
+            Affordance chosen = null;
+            float bestScore = 0f;
+
+            for (int i = 0; i < World.Objects.Count; i++)
+            {
+                SmartObject obj = World.Objects[i];
+                if (obj.Concealed || obj.HeldBy.Length > 0) continue;
+
+                float distance = Vec3.FlatDistance(obj.Position, npc.Position);
+                if (distance > 7f) continue;
+
+                for (int a = 0; a < obj.Affordances.Count; a++)
+                {
+                    Affordance aff = obj.Affordances[a];
+                    if (!aff.IsBusywork) continue;
+                    if (!aff.AvailableFor(obj, npc)) continue;
+
+                    // Don't do the same pointless thing twice running. A man who
+                    // wipes the same counter for eighty seconds is a different
+                    // kind of broken from one who stands still, but still broken.
+                    float until;
+                    if (npc.RepairCooldown.TryGetValue("busy:" + aff.Id, out until) && until > Time) continue;
+
+                    float score = (1f / (1f + distance)) * Rng.Range(0.6f, 1.4f);
+                    if (score <= bestScore) continue;
+
+                    bestScore = score;
+                    best = obj;
+                    chosen = aff;
+                }
+            }
+
+            if (best == null) return false;
+
+            npc.RepairCooldown["busy:" + chosen.Id] = Time + 45f;
+
+            npc.CurrentPlan = new Plan
+            {
+                Target = best,
+                Affordance = chosen,
+                Motive = NeedType.Order
+            };
+            npc.MoveTarget = best.Position;
+            npc.Activity = NpcActivity.Walking;
+            npc.ClosestApproach = float.MaxValue;
+            npc.StuckTimer = 0f;
+            npc.DecisionCooldown = 1.5f;
+            return true;
+        }
+
+        private SmartObject NearestObject(Npc npc, float within)
+        {
+            SmartObject best = null;
+            float bestDistance = within;
+
+            for (int i = 0; i < World.Objects.Count; i++)
+            {
+                SmartObject obj = World.Objects[i];
+                if (obj.Concealed) continue;
+                float d = Vec3.FlatDistance(obj.Position, npc.Position);
+                if (d >= bestDistance || d < 0.4f) continue;
+                bestDistance = d;
+                best = obj;
+            }
+
+            return best;
+        }
+
         private void Wander(Npc npc)
         {
             npc.CurrentPlan = null;
@@ -513,15 +644,27 @@ namespace AngryGuy.Core
                 }
             }
 
-            // Mostly just stand about and look around.
-            if (Rng.Chance(0.7f))
+            // Find something to be busy with. "No good option available" must
+            // never render as "frozen person" - standing still is the single
+            // strongest signal to a player that there is nobody home, and it was
+            // eating half of this level's runtime.
+            if (TryBusywork(npc)) return;
+
+            // Failing that, a short look around - seconds, not a rest state.
+            if (Rng.Chance(0.35f))
             {
                 npc.Activity = NpcActivity.Watching;
-                npc.ActivityTimer = Rng.Range(4f, 9f);
+                npc.ActivityTimer = Rng.Range(1.5f, 3.5f);
                 npc.DecisionCooldown = 1f;
 
-                Vec3 glance = new Vec3(Rng.Range(-1f, 1f), 0f, Rng.Range(-1f, 1f));
-                if (glance.SqrMagnitude > 0.01f) npc.Facing = glance.Normalized;
+                // Look at something real rather than at a random compass point.
+                SmartObject nearby = NearestObject(npc, 6f);
+                if (nearby != null)
+                {
+                    npc.Attention.Glance(nearby.Position, 3f);
+                    Vec3 toward = nearby.Position - npc.Position;
+                    if (toward.SqrMagnitude > 0.01f) npc.Facing = toward.Normalized;
+                }
                 return;
             }
 
@@ -730,6 +873,27 @@ namespace AngryGuy.Core
             float amount = AngerModel.PlanFailure(npc, plan.Motive);
             AngerModel.Add(npc, amount, this, "couldn't " + plan.Describe());
 
+            // Say it out loud. A visible failure that is narrated reads as a
+            // decision; the same failure in silence reads as a broken robot.
+            npc.Say(Lines.CannotFind(npc, plan.Target.Name), 3.5f);
+            npc.Attention.Glance(plan.Target.Position, 3f);
+
+            // Two failures at the same thing and a tidy person starts hunting
+            // properly - which means getting down and looking under furniture.
+            if (npc.FrustrationCount >= 2 && npc.Personality.Tidiness > 0.6f)
+            {
+                npc.Say("It has to be here. Things don't just walk off.", 3.5f);
+                NoteFlag("searched_floor");
+            }
+
+            // Blaming an object rather than a person is where a fussy man goes
+            // first, and it is funnier than an accusation.
+            if (plan.Target.HasTag(Tags.Appliance) || plan.Target.Id == "kettle")
+            {
+                npc.Say("This bloody kettle. Every single day.", 3.5f);
+                NoteFlag("blamed_kettle");
+            }
+
             npc.AvoidUntil[plan.Target.Id] = Time + 32f;
             Traps.NoteSprung(plan.Target.Id);
             ReactToMisfortune(npc, 0.45f, plan.Target.Position, plan.Target.Name);
@@ -777,6 +941,7 @@ namespace AngryGuy.Core
 
             if (!foundSomething) npc.Say("...must have been nothing.", 2f);
 
+            Tickets.Release("investigate", npc.Id);
             npc.Activity = NpcActivity.Idle;
             npc.DecisionCooldown = 1f;
         }
@@ -1149,7 +1314,10 @@ namespace AngryGuy.Core
         {
             npc.OutburstCooldown = 26f;
             npc.AngerAtLastOutburst = npc.Anger;
-            npc.Say("THAT'S IT! I'VE HAD ENOUGH OF THIS PLACE!", 5f);
+
+            string line = Lines.Outburst(npc);
+            npc.Say(line, 5f);
+            if (Lines.IsProfane(line)) NoteFlag("swore");
 
             Publish(new WorldEvent
             {
@@ -1160,6 +1328,75 @@ namespace AngryGuy.Core
                 Loudness = 1f,
                 Severity = 0.6f,
                 Description = npc.Name + " explodes with rage"
+            });
+
+            ThrowSomethingInRage(npc);
+        }
+
+        /// <summary>
+        /// A furious person picks up the nearest thing and hurls it.
+        ///
+        /// This is the physical punchline the whole level is building toward -
+        /// anger that only changes a number is not funny, and a man who finally
+        /// throws a biscuit tin is. It is also where the game's best accidents
+        /// live: what he throws and where it lands is nobody's decision.
+        /// </summary>
+        private void ThrowSomethingInRage(Npc npc)
+        {
+            SmartObject missile = null;
+            float best = 2.6f;
+
+            for (int i = 0; i < World.Objects.Count; i++)
+            {
+                SmartObject candidate = World.Objects[i];
+                if (!candidate.Portable || candidate.HeldBy.Length > 0 || candidate.Concealed) continue;
+
+                float d = Vec3.FlatDistance(candidate.Position, npc.Position);
+                if (d >= best) continue;
+                best = d;
+                missile = candidate;
+            }
+
+            if (missile == null) return;
+
+            // Away from him, and hard.
+            Vec3 direction = npc.Facing.Normalized;
+            Vec3 landing = new Vec3(
+                npc.Position.X + direction.X * 4.5f + Rng.Range(-1.2f, 1.2f),
+                0f,
+                npc.Position.Z + direction.Z * 4.5f + Rng.Range(-1.2f, 1.2f));
+
+            missile.Position = landing;
+
+            npc.Say("RIGHT!", 2.5f);
+            Log(npc.Name + " hurls the " + missile.Name + " across the room");
+
+            Announce(FeedbackKind.Payoff,
+                npc.Name + " throws the " + missile.Name, npc.Id);
+
+            // Out of an open window is a special case, because it is the funniest
+            // possible outcome and the player can engineer it.
+            SmartObject window = World.GetObject("window");
+            if (window != null && window.GetState("open") > 0f
+                && Vec3.FlatDistance(landing, window.Position) < 2.4f)
+            {
+                missile.Concealed = true;
+                Log("The " + missile.Name + " goes straight out of the window.");
+                Announce(FeedbackKind.Payoff,
+                    "The " + missile.Name + " goes out of the window", npc.Id);
+                if (missile.Id == "biscuits") NoteFlag("tin_defenestrated");
+            }
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.ObjectMoved,
+                Position = landing,
+                TrueActorId = npc.Id,
+                ObjectId = missile.Id,
+                Loudness = 0.8f,
+                Severity = 0.2f,
+                LeavesEvidence = false,
+                Description = npc.Name + " throws the " + missile.Name
             });
         }
 
@@ -1193,7 +1430,7 @@ namespace AngryGuy.Core
                 npc.Activity == NpcActivity.Idle &&
                 Rng.Chance(dt * 0.25f * npc.Personality.Observance))
             {
-                StartInvestigation(npc, Player.Position, "heard something");
+                Notice(npc, Player.Position, "heard something");
             }
 
             // Spotting that an object is wrong. Only a chance per sample, so
@@ -1408,6 +1645,64 @@ namespace AngryGuy.Core
             return home != null && home.Contains(where);
         }
 
+        // ------------------------------------------------------------------
+        // Notice, then react
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Clock something. Head turns, a beat passes, and only then do they act.
+        ///
+        /// Passing an empty reason means "just look" - a glance with no
+        /// follow-up, which is what most of the room should do most of the time.
+        /// Only the NPC holding the ticket for this event actually goes over.
+        /// </summary>
+        public void Notice(Npc npc, Vec3 what, string reason)
+        {
+            if (npc.Attention.Noticing) return;
+            if (npc.Anger >= AngerModel.BoilingPoint) return;
+
+            npc.Attention.LookAt = what;
+            npc.Attention.HasLookTarget = true;
+            npc.Attention.LookHold = 2.5f;
+
+            // Sharper people are quicker on the uptake, but nobody is instant.
+            npc.Attention.NoticeTimer =
+                Mathx.Lerp(0.75f, 0.3f, npc.Personality.Observance) * Rng.Range(0.85f, 1.25f);
+
+            npc.Attention.PendingReason = reason;
+            npc.Attention.PendingPoint = what;
+
+            if (reason.Length > 0) npc.Say(Lines.Noticing(npc), 2f);
+        }
+
+        private void FinishNotice(Npc npc)
+        {
+            string reason = npc.Attention.PendingReason;
+            Vec3 point = npc.Attention.PendingPoint;
+            npc.Attention.PendingReason = "";
+
+            if (reason.Length == 0) return;
+
+            // Only one person walks over. Everyone else already had their look,
+            // which is the whole reaction they get - and is why the room stops
+            // moving as one animal.
+            if (!Tickets.TryClaim("investigate", npc.Id, Time, 12f))
+            {
+                npc.Say(Lines.SomeoneElsesProblem(npc), 2.5f);
+                return;
+            }
+
+            StartInvestigation(npc, point, reason);
+        }
+
+        /// <summary>Turn on the spot toward something, without walking to it.</summary>
+        private void FaceToward(Npc npc, Vec3 target, float dt)
+        {
+            Vec3 delta = target - npc.Position;
+            if (delta.Magnitude < 0.01f) return;
+            npc.Facing = Vec3.MoveTowards(npc.Facing.Normalized, delta.Normalized, dt * 4f).Normalized;
+        }
+
         private void StartInvestigation(Npc npc, Vec3 point, string why)
         {
             npc.InvestigationPoint = point;
@@ -1489,7 +1784,7 @@ namespace AngryGuy.Core
                     AngerModel.Add(npc, AngerModel.WitnessedConflict(npc), this, "shouting nearby");
                     if (npc.Activity == NpcActivity.Idle && Rng.Chance(0.35f))
                     {
-                        StartInvestigation(npc, e.Position, "what's going on over there");
+                        Notice(npc, e.Position, "what's going on over there");
                     }
                     break;
 
@@ -1507,7 +1802,7 @@ namespace AngryGuy.Core
                     if (npc.Activity == NpcActivity.Idle &&
                         Rng.Chance((0.25f + npc.Personality.Observance * 0.45f) * npc.Mind.Alertness))
                     {
-                        StartInvestigation(npc, e.Position, "what was that");
+                        Notice(npc, e.Position, "what was that");
                     }
                     break;
 
@@ -1695,25 +1990,129 @@ namespace AngryGuy.Core
                 Witnessed = witnessed
             });
 
-            // Anyone watching right now has seen you do this.
-            float incrimination = option.Affordance.Incrimination;
-            if (incrimination > 0f)
+            // The act itself, as distinct from anything it caused. This is what
+            // makes doing something in front of people cost you.
+            PublishAct(new Act
             {
-                for (int i = 0; i < World.Npcs.Count; i++)
-                {
-                    Npc npc = World.Npcs[i];
-                    if (!CanSeePlayer(npc)) continue;
-
-                    RaiseSuspicion(npc, Player.Id, incrimination * 0.55f, "watched you do it");
-                    npc.Memory.RecordSighting(Player.Id, Player.Position, Time, incrimination);
-                    if (incrimination > 0.5f)
-                    {
-                        npc.Say("What are you doing over there?");
-                    }
-                }
-            }
+                ActorId = Player.Id,
+                Id = option.Affordance.ActId.Length > 0 ? option.Affordance.ActId : option.Affordance.Id,
+                Description = option.Label,
+                Position = Player.Position,
+                Incrimination = option.Affordance.Incrimination,
+                Loudness = option.Affordance.Noise,
+                Brazen = Acts.IsBrazen(option.Affordance.ActId),
+                ObjectId = option.Object.Id
+            });
 
             return true;
+        }
+
+        // ------------------------------------------------------------------
+        // Acts - the "somebody was seen doing something" channel
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Announce that a person did a thing, and work out who noticed.
+        ///
+        /// Consequences are published separately, through Publish/WorldEvent,
+        /// and carry no attribution at all. Keeping the two apart is the whole
+        /// stealth game: being in a room where something went wrong must never
+        /// be the same as being seen making it go wrong.
+        /// </summary>
+        public void PublishAct(Act act)
+        {
+            if (act == null || act.ActorId.Length == 0) return;
+
+            LastAct = act;
+
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                Npc npc = World.Npcs[i];
+                if (npc.Id == act.ActorId) continue;
+
+                Witnessing how = WitnessQuality(npc, act);
+                if (how == Witnessing.Missed) continue;
+
+                OnActWitnessed(npc, act, how);
+            }
+        }
+
+        /// <summary>How well did this NPC perceive that act, if at all?</summary>
+        public Witnessing WitnessQuality(Npc npc, Act act)
+        {
+            bool visible;
+
+            if (act.ActorId == Player.Id)
+            {
+                visible = CanSeePlayer(npc);
+            }
+            else
+            {
+                Npc actor = World.GetNpc(act.ActorId);
+                visible = actor != null
+                          && npc.Perception.CanSee(npc.Position, npc.Facing, actor.Position, World);
+            }
+
+            if (visible)
+            {
+                // Facing it squarely is a different thing from catching it out of
+                // the corner of an eye, and the difference has to be survivable.
+                Vec3 toAct = act.Position - npc.Position;
+                float facing = Vec3.Dot(npc.Facing.Normalized, toAct.Normalized);
+                float distance = Vec3.FlatDistance(npc.Position, act.Position);
+
+                bool squarelyOn = facing > 0.72f && distance < npc.Perception.SightRange * 0.7f;
+                if (squarelyOn || act.Brazen) return Witnessing.Saw;
+                return Witnessing.Glimpsed;
+            }
+
+            if (act.Loudness > 0.05f
+                && npc.Perception.CanHear(npc.Position, act.Position, act.Loudness, World))
+            {
+                return Witnessing.HeardOnly;
+            }
+
+            return Witnessing.Missed;
+        }
+
+        private void OnActWitnessed(Npc npc, Act act, Witnessing how)
+        {
+            // Heard but not seen: they know somebody is at it over there, but
+            // not who. That is a lead, not an accusation - so it moves them,
+            // and moves nothing else.
+            if (how == Witnessing.HeardOnly)
+            {
+                if (npc.Activity == NpcActivity.Idle || npc.Activity == NpcActivity.Watching)
+                {
+                    Notice(npc, act.Position, "what was that");
+                }
+                return;
+            }
+
+            float weight = Witnessed.Weight(how);
+            if (weight <= 0f) return;
+
+            npc.Memory.RecordSighting(act.ActorId, act.Position, Time, act.Incrimination * weight);
+
+            if (act.ActorId == Player.Id)
+            {
+                RaiseSuspicion(npc, Player.Id, act.Incrimination * 0.55f * weight, Witnessed.Reason(how));
+            }
+            else
+            {
+                RaiseSuspicion(npc, act.ActorId, act.Incrimination * 0.4f * weight, Witnessed.Reason(how));
+            }
+
+            // Something obviously wrong, watched squarely, gets said out loud.
+            if (act.Brazen && how == Witnessing.Saw)
+            {
+                Notice(npc, act.Position, "");
+                npc.Say(Lines.SawSomethingBrazen(npc, act), 3.5f);
+            }
+            else if (act.Incrimination > 0.5f && how == Witnessing.Saw)
+            {
+                npc.Say("What are you doing over there?", 3f);
+            }
         }
 
         /// <summary>
@@ -1783,6 +2182,32 @@ namespace AngryGuy.Core
         // ------------------------------------------------------------------
         // Objective
         // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Tick every outstanding job. Jobs are predicates over the whole world,
+        /// which is what lets them reward things we never designed: "get two
+        /// people arguing while he watches" is satisfied by whatever chain of
+        /// events happens to produce it.
+        /// </summary>
+        private void CheckJobs()
+        {
+            if (Contract == null) return;
+
+            for (int i = 0; i < Contract.Jobs.Count; i++)
+            {
+                Job job = Contract.Jobs[i];
+                if (job.Done || job.IsSatisfied == null) continue;
+                if (!job.IsSatisfied(this)) continue;
+
+                job.Done = true;
+                job.DoneAt = Time;
+                Progress.Remember(job);
+
+                Announce(FeedbackKind.Objective,
+                    (job.Hidden ? "✱ " : "") + job.Text, "");
+                Log((job.Hidden ? "✱ " : "") + "Done: " + job.Text);
+            }
+        }
 
         private void CheckObjective()
         {
@@ -2041,6 +2466,34 @@ namespace AngryGuy.Core
         /// applied to a trickle it quarters every tick and decay eats the rest,
         /// so a continuous source would silently do nothing at all.
         /// </summary>
+        /// <summary>
+        /// Freeze the case against the player, so the caught screen can show it.
+        ///
+        /// A fail state that only says "caught" teaches nothing and the player
+        /// repeats the mistake. The actual suspicion events, with their reasons,
+        /// turn a loss into a lesson they can act on in the four seconds before
+        /// they press retry.
+        /// </summary>
+        private void RecordCaught(Npc npc)
+        {
+            if (CaughtBy != null) return;
+
+            CaughtBy = npc;
+            CaughtEvidence.Clear();
+
+            IReadOnlyList<FeedbackEvent> history = Feedback.History;
+            for (int i = 0; i < history.Count; i++)
+            {
+                FeedbackEvent e = history[i];
+                if (e.Kind != FeedbackKind.Suspicion) continue;
+                if (e.ActorId != npc.Id) continue;
+                CaughtEvidence.Add(e);
+            }
+
+            // Only the moves that actually mattered.
+            while (CaughtEvidence.Count > 5) CaughtEvidence.RemoveAt(0);
+        }
+
         /// <summary>Reasons that are a hunch rather than an observation.</summary>
         private static bool IsInference(string reason)
         {
@@ -2127,6 +2580,7 @@ namespace AngryGuy.Core
 
                 if (after >= CaughtThreshold)
                 {
+                    RecordCaught(npc);
                     Outcome = GameOutcome.Caught;
                     Log(npc.Name + " is certain it was you.");
                 }

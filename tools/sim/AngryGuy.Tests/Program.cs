@@ -71,6 +71,17 @@ namespace AngryGuy.Tests
             Test("Real suspicion sticks; a passing glance fades", SuspicionStickiness);
             Test("Planting stolen goods redirects the blame", PlantingFramesSomeone);
 
+            Test("Pulling an alarm in front of people is not free", BrazenActsAreWitnessed);
+            Test("An act nobody saw carries no attribution", UnseenActIsAnonymous);
+            Test("Hearing an act draws you over without naming anyone", HeardActIsALead);
+            Test("Nobody reacts instantly - there is a beat first", NoticeComesBeforeReaction);
+            Test("Only one person goes to investigate", ReactionTicketsSpreadTheRoom);
+
+            Test("Marking Hour: nobody home means nobody angry", MarkingHourAmbientIsCalm);
+            Test("Marking Hour: taking the pen makes him snap", MarkingHourPenWorks);
+            Test("Marking Hour: jobs complete off real behaviour", MarkingHourJobsFire);
+            Test("Knowledge survives being caught", ProgressSurvivesRestart);
+
             Test("Same seed produces the same run", RunDeterminism);
 
             Test("End to end: the chef can be driven furious", EndToEndAngerRises);
@@ -999,6 +1010,201 @@ namespace AngryGuy.Tests
             AssertTrue(chef.SuspicionOf(terry.Id) > chef.SuspicionOf(PlayerAvatar.PlayerId),
                 "Gordon should be looking at Terry, not at you (Terry " +
                 chef.SuspicionOf(terry.Id) + " vs you " + chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        // ------------------------------------------------------------------
+        // Acts: the "somebody was seen doing something" channel
+        // ------------------------------------------------------------------
+
+        private static void BrazenActsAreWitnessed()
+        {
+            Simulation sim = KitchenLevel.Build(601);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            SmartObject alarm = sim.World.GetObject(KitchenLevel.Ids.Alarm);
+
+            // Standing right in front of him, in the open.
+            sim.Player.Position = alarm.Position;
+            chef.Position = new Vec3(alarm.Position.X + 1.5f, 0f, alarm.Position.Z);
+            chef.Facing = (alarm.Position - chef.Position).Normalized;
+
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) < 0.01f, "calm to begin with");
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Alarm, "pull_alarm"), "pull it");
+
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) > 0.2f,
+                "doing something that brazen in front of someone has to cost (" +
+                chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        private static void UnseenActIsAnonymous()
+        {
+            Simulation sim = KitchenLevel.Build(602);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            SmartObject alarm = sim.World.GetObject(KitchenLevel.Ids.Alarm);
+
+            sim.Player.Position = alarm.Position;
+            ParkEveryoneExcept(sim, null);
+
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Alarm, "pull_alarm"), "pull it unseen");
+
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) < 0.01f,
+                "the same act, unobserved, must name nobody");
+            AssertTrue(sim.AlarmRinging, "but it still went off");
+        }
+
+        private static void HeardActIsALead()
+        {
+            Simulation sim = KitchenLevel.Build(603);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // Behind him, out of sight, but well within earshot.
+            terry.Position = new Vec3(-7f, 0f, 6f);
+            terry.Facing = new Vec3(0f, 0f, 1f);
+            terry.Activity = NpcActivity.Idle;
+
+            Vec3 behind = new Vec3(-7f, 0f, 4.2f);
+
+            sim.PublishAct(new Act
+            {
+                ActorId = PlayerAvatar.PlayerId,
+                Id = Acts.Break,
+                Description = "something clattering",
+                Position = behind,
+                Incrimination = 0.6f,
+                Loudness = 0.9f
+            });
+
+            AssertTrue(terry.SuspicionOf(PlayerAvatar.PlayerId) < 0.01f,
+                "hearing a noise tells you nothing about who made it");
+            AssertTrue(terry.Attention.Noticing || terry.Activity == NpcActivity.Investigating,
+                "but it should absolutely get his attention");
+        }
+
+        private static void NoticeComesBeforeReaction()
+        {
+            Simulation sim = KitchenLevel.Build(604);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+
+            sim.Notice(eva, new Vec3(eva.Position.X + 3f, 0f, eva.Position.Z), "what was that");
+
+            AssertTrue(eva.Attention.Noticing, "there is a beat before anything happens");
+            AssertTrue(eva.Activity != NpcActivity.Investigating,
+                "and during it they have not set off yet");
+
+            RunFor(sim, 2.5f);
+
+            AssertTrue(!eva.Attention.Noticing, "the beat passes");
+        }
+
+        private static void ReactionTicketsSpreadTheRoom()
+        {
+            Simulation sim = KitchenLevel.Build(605);
+
+            // Put the whole cast in one place and give them all the same reason
+            // to go and look at the same thing.
+            Vec3 where = new Vec3(0f, 0f, 0f);
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc npc = sim.World.Npcs[i];
+                npc.Position = new Vec3(-2f + i * 0.5f, 0f, 2f);
+                npc.Activity = NpcActivity.Idle;
+                sim.Notice(npc, where, "what was that");
+            }
+
+            RunFor(sim, 3f);
+
+            int investigating = 0;
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                if (sim.World.Npcs[i].Activity == NpcActivity.Investigating) investigating++;
+            }
+
+            AssertTrue(investigating <= 1,
+                "one person goes and looks; the rest get on with their lives (got " +
+                investigating + ")");
+        }
+
+        // ------------------------------------------------------------------
+        // Level 1
+        // ------------------------------------------------------------------
+
+        private static void MarkingHourAmbientIsCalm()
+        {
+            Simulation sim = MarkingHour.Build(701);
+            sim.Player.Position = new Vec3(40f, 0f, 40f);
+
+            RunFor(sim, 420f);
+
+            Npc p = sim.World.GetNpc(MarkingHour.Ids.Pemberton);
+            AssertTrue(p.Anger < 0.05f,
+                "a man left alone with his marking stays calm (" + p.Anger + ")");
+            AssertTrue(p.PeakAnger < 0.15f,
+                "and never even gets close (" + p.PeakAnger + ")");
+        }
+
+        private static void MarkingHourPenWorks()
+        {
+            Simulation sim = MarkingHour.Build(702);
+            SmartObject pen = sim.World.GetObject(MarkingHour.Ids.RedPen);
+            Npc p = sim.World.GetNpc(MarkingHour.Ids.Pemberton);
+
+            // Take the pen, then be somewhere else entirely.
+            sim.Player.Position = pen.Position;
+            AssertTrue(sim.PlayerInteract(MarkingHour.Ids.RedPen, "take"), "take the pen");
+            sim.Player.Position = new Vec3(40f, 0f, 40f);
+
+            RunFor(sim, 300f);
+
+            AssertTrue(p.PeakAnger >= Simulation.AngerWinThreshold,
+                "one pen, correctly taken, is the whole level (" + p.PeakAnger + ")");
+            AssertTrue(p.SuspicionOf(PlayerAvatar.PlayerId) < 0.4f,
+                "and done from across the room it should not point at you");
+        }
+
+        private static void MarkingHourJobsFire()
+        {
+            Simulation sim = MarkingHour.Build(703);
+            SmartObject pen = sim.World.GetObject(MarkingHour.Ids.RedPen);
+
+            sim.Player.Position = pen.Position;
+            sim.PlayerInteract(MarkingHour.Ids.RedPen, "take");
+            sim.Player.Position = new Vec3(40f, 0f, 40f);
+
+            RunFor(sim, 300f);
+
+            Contract c = sim.Contract;
+            AssertTrue(c != null, "the level has a contract");
+            AssertTrue(c.ContractDone, "and it got done");
+
+            // These are not scripted: they fall out of him hunting for the pen
+            // and eventually losing his temper about it.
+            AssertTrue(c.Find("under_table").Done,
+                "a tidy man who cannot find something ends up on the floor");
+            AssertTrue(c.Find("bad_word").Done,
+                "and a deputy head who loses it says something he shouldn't");
+        }
+
+        private static void ProgressSurvivesRestart()
+        {
+            Simulation first = MarkingHour.Build(704);
+            SmartObject pen = first.World.GetObject(MarkingHour.Ids.RedPen);
+
+            first.Player.Position = pen.Position;
+            first.PlayerInteract(MarkingHour.Ids.RedPen, "take");
+            first.Player.Position = new Vec3(40f, 0f, 40f);
+            RunFor(first, 300f);
+
+            AssertTrue(first.Contract.Find("under_table").Done, "did it once");
+
+            // Caught, restart. What the player worked out stays worked out.
+            LevelProgress carried = first.Progress;
+            Simulation second = MarkingHour.Build(705);
+            second.Progress = carried;
+            carried.Restore(second.Contract);
+
+            AssertTrue(second.Contract.Find("under_table").Done,
+                "knowledge survives the restart - the retry is a rewind, not a punishment");
+            AssertTrue(!second.Contract.Find("contract").Done,
+                "but the contract itself always has to be earned again");
         }
 
         private static void Schadenfreude()

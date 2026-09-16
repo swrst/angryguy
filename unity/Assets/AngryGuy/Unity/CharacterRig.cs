@@ -30,6 +30,15 @@ namespace AngryGuy.UnityLayer
         private Renderer _torsoRenderer;
         private Renderer _headRenderer;
 
+        private Transform _face;
+        private Renderer _faceRenderer;
+        private Material _faceMaterial;
+        private Face _currentFace = Face.Neutral;
+        private float _blinkTimer;
+
+        private readonly ReactionPlayer _reaction = new ReactionPlayer();
+        private float _reactionOffset;
+
         private float _walkPhase;
         private float _bobPhase;
         private float _lastYaw;
@@ -94,6 +103,8 @@ namespace AngryGuy.UnityLayer
                 new Vector3(0f, -0.02f, s * 0.62f), new Vector3(0.1f, 0.1f, 0.14f),
                 new Color(0.2f, 0.18f, 0.18f), materials);
 
+            BuildFace(s, materials);
+
             if (build.HasHair)
             {
                 MakeBox(_head, "hair",
@@ -151,6 +162,58 @@ namespace AngryGuy.UnityLayer
             MakeBox(_hipR, "legR", new Vector3(0f, -0.44f * h, 0f), leg, trousers, materials);
         }
 
+        /// <summary>
+        /// Eyes and brows on a quad just proud of the skull, swapped by moving a
+        /// UV offset. Sixteen expressions for one texture and one material
+        /// property - and brows alone carry most of what a player reads as
+        /// emotion, which is why this beats blend shapes at our poly count by a
+        /// distance neither of us could close by hand.
+        /// </summary>
+        private void BuildFace(float headSize, Materials materials)
+        {
+            GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            quad.name = "face";
+            quad.transform.SetParent(_head, false);
+            quad.transform.localPosition = new Vector3(0f, headSize * 0.08f, headSize * 0.505f);
+            quad.transform.localScale = new Vector3(headSize * 0.95f, headSize * 0.95f, 1f);
+
+            Collider collider = quad.GetComponent<Collider>();
+            if (collider != null) Object.Destroy(collider);
+
+            _faceRenderer = quad.GetComponent<Renderer>();
+            _faceMaterial = materials.Cutout(FaceAtlas.Texture);
+            _faceRenderer.sharedMaterial = _faceMaterial;
+
+            _face = quad.transform;
+            SetFace(Face.Neutral, true);
+        }
+
+        /// <summary>Change expression. Cheap enough to call every frame.</summary>
+        public void SetFace(Face face, bool force = false)
+        {
+            if (!force && face == _currentFace) return;
+            if (_faceRenderer == null) return;
+
+            _currentFace = face;
+
+            // One shared material per rig, so the offset does not leak between
+            // characters - every NPC would otherwise wear the same expression.
+            Material instance = _faceRenderer.material;
+            instance.mainTextureScale = FaceAtlas.Scale;
+            instance.mainTextureOffset = FaceAtlas.OffsetFor(face);
+        }
+
+        /// <summary>Kick off a physical reaction. The rig plays it over the pose.</summary>
+        public void React(Reaction reaction, float force = 1f)
+        {
+            _reaction.Play(reaction, force);
+        }
+
+        public bool Reacting
+        {
+            get { return _reaction.Playing; }
+        }
+
         private static Transform MakeNode(Transform parent, string name, Vector3 localPosition)
         {
             GameObject node = new GameObject(name);
@@ -184,6 +247,33 @@ namespace AngryGuy.UnityLayer
         public void Pose(Vec3 position, Vec3 facing, NpcActivity activity, float anger,
             bool sitting, float dt, Materials materials, Color uniform, Color skin)
         {
+            Pose(position, facing, activity, anger, sitting, dt, materials, uniform, skin, null);
+        }
+
+        public void Pose(Vec3 position, Vec3 facing, NpcActivity activity, float anger,
+            bool sitting, float dt, Materials materials, Color uniform, Color skin, Npc npc)
+        {
+            _reactionOffset = _reaction.Tick(dt);
+
+            if (npc != null)
+            {
+                Face wanted = FaceAtlas.For(npc);
+
+                // A blink every few seconds, skipped when they are mid-reaction -
+                // blinking through a held pose kills it.
+                _blinkTimer -= dt;
+                if (_blinkTimer <= 0f)
+                {
+                    _blinkTimer = UnityEngine.Random.Range(2.5f, 6f);
+                }
+                else if (_blinkTimer < 0.12f && !_reaction.Playing && anger < 0.8f)
+                {
+                    wanted = Face.Blink;
+                }
+
+                SetFace(wanted);
+            }
+
             Vector3 target = LevelView.ToUnity(position);
 
             float moved = Vector3.Distance(target, _lastPosition) / Mathf.Max(dt, 0.0001f);
@@ -212,7 +302,7 @@ namespace AngryGuy.UnityLayer
                 PoseUpright(speed, anger, activity);
             }
 
-            PoseHead(activity, anger, dt);
+            PoseHead(activity, anger, dt, npc);
             Tint(anger, materials, uniform, skin);
         }
 
@@ -246,8 +336,16 @@ namespace AngryGuy.UnityLayer
             float breathe = Mathf.Sin(_bobPhase) * 0.012f;
             float rage = anger >= 0.85f ? Mathf.Sin(Time.time * 40f) * 0.02f : 0f;
 
-            _hips.localPosition = new Vector3(rage, _hipHeight + bob + breathe, 0f);
-            _hips.localRotation = Quaternion.Euler(speed * 6f, 0f, 0f);
+            // A reaction overrides the idle pose: the body rocks back, then
+            // snaps forward past neutral, then holds. Volume-preserving squash
+            // on the way through sells the weight of it.
+            float react = _reactionOffset;
+            float squash = 1f + react * 0.16f;
+
+            _hips.localPosition = new Vector3(rage, _hipHeight + bob + breathe - react * 0.06f, 0f);
+            _hips.localRotation = Quaternion.Euler(speed * 6f - react * 22f, 0f, react * 6f);
+            _hips.localScale = new Vector3(
+                1f / Mathf.Sqrt(squash), squash, 1f / Mathf.Sqrt(squash));
             _torso.localRotation = Quaternion.Euler(0f, Mathf.Sin(_walkPhase) * 4f, 0f);
         }
 
@@ -262,8 +360,40 @@ namespace AngryGuy.UnityLayer
             _torso.localRotation = Quaternion.Euler(6f, 0f, 0f);
         }
 
-        private void PoseHead(NpcActivity activity, float anger, float dt)
+        private void PoseHead(NpcActivity activity, float anger, float dt, Npc npc)
         {
+            // Look at what they are thinking about.
+            //
+            // This is the highest perceived-intelligence win in the whole
+            // project per line of code. An NPC whose head tracks the thing you
+            // just moved is unnerving; the identical NPC with a fixed head is
+            // furniture. The target comes straight off the simulation's own
+            // attention state, so what you see really is what it is thinking.
+            if (npc != null && npc.Attention.HasLookTarget)
+            {
+                Vector3 look = LevelView.ToUnity(npc.Attention.LookAt) - _head.position;
+                if (look.sqrMagnitude > 0.0001f)
+                {
+                    Quaternion world = Quaternion.LookRotation(look.normalized, Vector3.up);
+                    Quaternion local = Quaternion.Inverse(Root.rotation) * world;
+
+                    // Necks do not rotate 180 degrees. Clamp, and let the body
+                    // turn handle anything further round than that.
+                    Vector3 euler = local.eulerAngles;
+                    float yaw = Mathf.DeltaAngle(0f, euler.y);
+                    float pitch = Mathf.DeltaAngle(0f, euler.x);
+
+                    Quaternion clamped = Quaternion.Euler(
+                        Mathf.Clamp(pitch, -35f, 40f),
+                        Mathf.Clamp(yaw, -78f, 78f),
+                        0f);
+
+                    _head.localRotation = Quaternion.Slerp(
+                        _head.localRotation, clamped, 1f - Mathf.Exp(-11f * dt));
+                    return;
+                }
+            }
+
             // Scanning the room while investigating is the clearest possible
             // "this NPC is looking for something" signal.
             float scan = activity == NpcActivity.Investigating
@@ -271,7 +401,9 @@ namespace AngryGuy.UnityLayer
                 : Mathf.Sin(Time.time * 0.6f) * 6f;
 
             float nod = anger >= 0.6f ? Mathf.Sin(Time.time * 9f) * 5f : 0f;
-            _head.localRotation = Quaternion.Euler(nod, scan, 0f);
+
+            _head.localRotation = Quaternion.Slerp(
+                _head.localRotation, Quaternion.Euler(nod, scan, 0f), 1f - Mathf.Exp(-8f * dt));
         }
 
         private void Tint(float anger, Materials materials, Color uniform, Color skin)

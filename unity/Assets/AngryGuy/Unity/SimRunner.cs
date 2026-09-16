@@ -74,6 +74,21 @@ namespace AngryGuy.UnityLayer
             StartLevel(Seed == 0 ? Random.Range(1, int.MaxValue) : Seed);
         }
 
+        /// <summary>What the player has carried across attempts at this level.</summary>
+        private readonly LevelProgress _progress = new LevelProgress();
+
+        /// <summary>
+        /// Which level to build. Marking Hour is the game; the kitchen is kept
+        /// as the six-NPC systems sandbox, because it is still the best stress
+        /// test we have for blame, gossip and the fixer.
+        /// </summary>
+        public bool UseSandbox;
+
+        private Simulation BuildLevel(int seed)
+        {
+            return UseSandbox ? KitchenLevel.Build(seed) : MarkingHour.Build(seed);
+        }
+
         public void StartLevel(int seed)
         {
             Seed = seed;
@@ -86,7 +101,14 @@ namespace AngryGuy.UnityLayer
             Channelling = null;
             Focus = null;
 
-            Sim = KitchenLevel.Build(seed);
+            Sim = BuildLevel(seed);
+
+            // Being caught restarts the level, and that restart has to cost
+            // almost nothing. Everything the player worked out last attempt
+            // stays worked out, so the retry is a rewind rather than a penalty.
+            Sim.Progress = _progress;
+            _progress.Attempts++;
+            _progress.Restore(Sim.Contract);
 
             View = new LevelView();
             View.Build(Sim, transform);

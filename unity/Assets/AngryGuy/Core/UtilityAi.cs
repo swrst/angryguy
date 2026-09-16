@@ -49,6 +49,10 @@ namespace AngryGuy.Core
                     Affordance aff = obj.Affordances[a];
                     if (aff.IsSabotage) continue;
 
+                    // Busywork is what an NPC does when nothing matters, never
+                    // something they would choose over a real want.
+                    if (aff.IsBusywork) continue;
+
                     // Deliberately the distance check, not the full one. NPCs plan
                     // on what they can tell from here; the truth is discovered on
                     // arrival, and the gap between the two is the whole game.

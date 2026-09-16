@@ -87,9 +87,32 @@ namespace AngryGuy.Core
         public Affordance Affordance;
         public float Distance;
 
+        /// <summary>
+        /// "Take the red pen", but also "Take his mug" - a name that already
+        /// carries its own article must not collect a second one.
+        /// </summary>
         public string Label
         {
-            get { return Affordance.Verb + " " + Object.Name; }
+            get
+            {
+                string verb = Affordance.Verb;
+                string name = Object.Name;
+
+                if (verb.EndsWith(" the") && CarriesOwnArticle(name))
+                {
+                    verb = verb.Substring(0, verb.Length - 4);
+                }
+
+                return verb + " " + name;
+            }
+        }
+
+        private static bool CarriesOwnArticle(string name)
+        {
+            string lower = name.ToLowerInvariant();
+            return lower.StartsWith("his ") || lower.StartsWith("her ")
+                   || lower.StartsWith("their ") || lower.StartsWith("the ")
+                   || lower.StartsWith("a ") || lower.StartsWith("someone");
         }
 
         public bool IsSabotage

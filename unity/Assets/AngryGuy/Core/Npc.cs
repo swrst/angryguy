@@ -55,6 +55,12 @@ namespace AngryGuy.Core
         public NpcMemory Memory = new NpcMemory();
         public PerceptionModel Perception = new PerceptionModel();
 
+        /// <summary>What they are looking at, and the beat before they react.</summary>
+        public readonly Attention Attention = new Attention();
+
+        /// <summary>Set by World.Add. Lets a precondition look up another object.</summary>
+        public World World;
+
         /// <summary>0..1. The thing the player is trying to raise.</summary>
         public float Anger;
 

@@ -88,6 +88,7 @@ namespace AngryGuy.UnityLayer
                 return;
             }
 
+            DrawTaskList(sim);
             DrawObjectivePanel(sim);
             DrawTrapPanel(sim);
             DrawWatchers(sim);
@@ -119,14 +120,25 @@ namespace AngryGuy.UnityLayer
             Panel(panel);
 
             GUI.color = new Color(1f, 0.85f, 0.45f);
-            GUI.Label(new Rect(panel.x, panel.y + 22f, width, 44f), "ANGRY GUY", _huge);
+            GUI.Label(new Rect(panel.x, panel.y + 22f, width, 44f), "LAST STRAW", _huge);
             GUI.color = Color.white;
             GUI.Label(new Rect(panel.x, panel.y + 66f, width, 22f),
-                "Make one man furious. Don't let anyone work out it was you.", Centred(_small));
+                _runner.Sim != null && _runner.Sim.Contract != null
+                    ? _runner.Sim.Contract.Title.ToUpperInvariant()
+                    : "Make one man furious. Don't let anyone work out it was you.",
+                Centred(_small));
+
+            if (_runner.Sim != null && _runner.Sim.Contract != null)
+            {
+                GUI.color = new Color(0.8f, 0.82f, 0.86f);
+                GUI.Label(new Rect(panel.x + 40f, panel.y + 86f, width - 80f, 20f),
+                    "\"" + _runner.Sim.Contract.Brief + "\"", Centred(_tiny));
+                GUI.color = Color.white;
+            }
 
             float y = panel.y + 108f;
 
-            if (GUI.Button(new Rect(panel.x + 120f, y, 240f, 40f), "PLAY  -  The Restaurant"))
+            if (GUI.Button(new Rect(panel.x + 120f, y, 240f, 40f), "TAKE THE CONTRACT"))
             {
                 _runner.BeginPlay();
             }
@@ -152,8 +164,8 @@ namespace AngryGuy.UnityLayer
                 "T throw held item     F hide     Q cancel     V camera",
                 "TAB debug overlay     H toggle controls",
                 "",
-                "Orange options are sabotage. Most of it pays off on a delay -",
-                "set it up, then make sure you're somewhere else when it lands."
+                "He has a routine. Watch one cycle before you touch anything,",
+                "and remember that he only knows what he can actually see."
             };
 
             for (int i = 0; i < help.Length; i++)
@@ -161,6 +173,44 @@ namespace AngryGuy.UnityLayer
                 GUI.Label(new Rect(panel.x + 20f, y + i * 17f, width - 40f, 16f),
                     help[i], Centred(_tiny));
             }
+        }
+
+        /// <summary>
+        /// The to-do list. Top right, always visible, ticking off live.
+        ///
+        /// Every line names an outcome and never a method, which is what makes
+        /// it a set of goals rather than a walkthrough. Hidden jobs show as
+        /// asterisks: you can see how many secrets the level holds without being
+        /// told what any of them are.
+        /// </summary>
+        private void DrawTaskList(Simulation sim)
+        {
+            Contract contract = sim.Contract;
+            if (contract == null || contract.Jobs.Count == 0) return;
+
+            float width = 340f;
+            float height = 44f + contract.Jobs.Count * 22f;
+            Rect panel = new Rect(Screen.width - width - 14f, 14f, width, height);
+            Panel(panel);
+
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 8f, width - 24f, 22f),
+                "TO DO", _title);
+
+            for (int i = 0; i < contract.Jobs.Count; i++)
+            {
+                Job job = contract.Jobs[i];
+                float y = panel.y + 34f + i * 22f;
+
+                if (job.Done) GUI.color = new Color(0.45f, 0.78f, 0.5f);
+                else if (job.Required) GUI.color = new Color(1f, 0.85f, 0.45f);
+                else if (job.Hidden) GUI.color = new Color(0.62f, 0.6f, 0.7f);
+                else GUI.color = new Color(0.88f, 0.9f, 0.94f);
+
+                GUI.Label(new Rect(panel.x + 12f, y, 16f, 20f), job.Done ? "x" : "-", _small);
+                GUI.Label(new Rect(panel.x + 30f, y, width - 44f, 20f), job.Display, _small);
+            }
+
+            GUI.color = Color.white;
         }
 
         private void DrawObjectivePanel(Simulation sim)
@@ -278,6 +328,39 @@ namespace AngryGuy.UnityLayer
             }
 
             GUI.color = Color.white;
+        }
+
+        /// <summary>
+        /// Exactly what was seen, and when. Five lines at most - only the moves
+        /// that actually mattered, so the lesson is one sentence long.
+        /// </summary>
+        private float DrawEvidence(Simulation sim, float top)
+        {
+            float width = 620f;
+            float height = 62f + sim.CaughtEvidence.Count * 22f;
+            Rect panel = new Rect((Screen.width - width) * 0.5f, top, width, height);
+
+            Panel(panel);
+
+            GUI.color = new Color(1f, 0.6f, 0.5f);
+            GUI.Label(new Rect(panel.x + 16f, panel.y + 10f, width - 32f, 20f),
+                "WHAT GAVE YOU AWAY", _title);
+            GUI.color = Color.white;
+
+            for (int i = 0; i < sim.CaughtEvidence.Count; i++)
+            {
+                FeedbackEvent e = sim.CaughtEvidence[i];
+                GUI.Label(new Rect(panel.x + 16f, panel.y + 36f + i * 22f, width - 32f, 20f),
+                    string.Format("{0,4:0}s    +{1,-3}   {2}", e.Time, e.Amount, e.Text),
+                    _small);
+            }
+
+            GUI.color = new Color(0.75f, 0.77f, 0.8f);
+            GUI.Label(new Rect(panel.x + 16f, panel.y + height - 24f, width - 32f, 20f),
+                "R to try again - everything you worked out this run is kept.", _small);
+            GUI.color = Color.white;
+
+            return top + height + 14f;
         }
 
         private string MostSuspicious(Simulation sim)
@@ -555,7 +638,9 @@ namespace AngryGuy.UnityLayer
                     break;
                 case GameOutcome.Caught:
                     headline = "RUMBLED";
-                    detail = "Somebody worked out exactly what you were doing.";
+                    detail = sim.CaughtBy != null
+                        ? sim.CaughtBy.Name + " worked out exactly what you were doing."
+                        : "Somebody worked out exactly what you were doing.";
                     tint = new Color(1f, 0.45f, 0.35f);
                     break;
                 default:
@@ -572,9 +657,19 @@ namespace AngryGuy.UnityLayer
             GUI.color = Color.white;
             GUI.Label(new Rect(0f, top + 46f, Screen.width, 24f), detail, Centred(_label));
 
+            // The case against you, before anything else. A fail screen that
+            // only says "caught" teaches nothing and the player repeats the
+            // mistake; the actual events that convicted them turn a loss into
+            // something they can act on before they press R.
+            float nextTop = top + 86f;
+            if (sim.Outcome == GameOutcome.Caught && sim.CaughtEvidence.Count > 0)
+            {
+                nextTop = DrawEvidence(sim, nextTop);
+            }
+
             // "How did you do that" - the recap that teaches players what worked.
             float width = 620f;
-            Rect panel = new Rect((Screen.width - width) * 0.5f, top + 86f, width,
+            Rect panel = new Rect((Screen.width - width) * 0.5f, nextTop, width,
                 70f + Mathf.Min(sim.PlayerActions.Count, 12) * 20f);
             Panel(panel);
 

@@ -15,6 +15,7 @@ namespace UnityEngine
     {
         public string name { get; set; }
         public static void Destroy(Object target) { }
+        public static void Destroy(Object target, float delay) { }
         public static T FindAnyObjectByType<T>() where T : Object { return null; }
         public static bool operator ==(Object a, Object b) { return ReferenceEquals(a, b); }
         public static bool operator !=(Object a, Object b) { return !ReferenceEquals(a, b); }
@@ -51,6 +52,9 @@ namespace UnityEngine
 
     public struct Quaternion
     {
+        public static Quaternion operator *(Quaternion a, Quaternion b) { return default(Quaternion); }
+        public Vector3 eulerAngles { get { return default(Vector3); } }
+        public static Quaternion Inverse(Quaternion q) { return default(Quaternion); }
         public static Quaternion identity { get { return new Quaternion(); } }
         public static Quaternion Euler(float x, float y, float z) { return new Quaternion(); }
         public static Quaternion LookRotation(Vector3 forward, Vector3 up) { return new Quaternion(); }
@@ -80,6 +84,11 @@ namespace UnityEngine
 
     public static class Mathf
     {
+        public static float DeltaAngle(float a, float b) { return b - a; }
+        public static float Floor(float f) { return (float)System.Math.Floor(f); }
+        public static float Ceil(float f) { return (float)System.Math.Ceiling(f); }
+        public static int CeilToInt(float f) { return (int)System.Math.Ceiling(f); }
+        public static int FloorToInt(float f) { return (int)System.Math.Floor(f); }
         public const float Rad2Deg = 57.29578f;
         public const float Deg2Rad = 0.0174532924f;
         public const float PI = 3.14159274f;
@@ -129,6 +138,7 @@ namespace UnityEngine
     public class MonoBehaviour : Behaviour
     {
         public static void Destroy(Object target) { }
+        public static void Destroy(Object target, float delay) { }
     }
 
     public enum PrimitiveType { Cube, Capsule, Plane, Cylinder, Sphere, Quad }
@@ -178,10 +188,25 @@ namespace UnityEngine
         public Color color { get; set; }
         public Texture mainTexture { get; set; }
         public Vector2 mainTextureScale { get; set; }
+        public Vector2 mainTextureOffset { get; set; }
+        public int renderQueue { get; set; }
         public bool HasProperty(string name) { return true; }
         public void SetColor(string name, Color value) { }
+        public void SetFloat(string name, float value) { }
         public void SetTexture(string name, Texture value) { }
         public void SetTextureScale(string name, Vector2 value) { }
+        public void EnableKeyword(string keyword) { }
+        public void DisableKeyword(string keyword) { }
+    }
+
+    public enum FilterMode { Point, Bilinear, Trilinear }
+
+    public enum TextureFormat { Alpha8, RGB24, RGBA32, ARGB32 }
+
+    public struct Color32
+    {
+        public byte r, g, b, a;
+        public Color32(byte r, byte g, byte b, byte a) { this.r = r; this.g = g; this.b = b; this.a = a; }
     }
 
     public enum TextureWrapMode { Repeat, Clamp, Mirror, MirrorOnce }
@@ -193,7 +218,13 @@ namespace UnityEngine
 
     public class Texture2D : Texture
     {
+        public Texture2D(int width, int height) { }
+        public Texture2D(int width, int height, TextureFormat format, bool mipChain) { }
         public static Texture2D whiteTexture { get { return null; } }
+        public FilterMode filterMode { get; set; }
+        public void SetPixels32(Color32[] colors) { }
+        public void SetPixels(Color[] colors) { }
+        public void Apply() { }
     }
 
     public static class Resources
@@ -201,10 +232,13 @@ namespace UnityEngine
         public static T Load<T>(string path) where T : Object { return null; }
     }
 
-    public class AudioClip : Object { }
+    public class AudioClip : Object { public float length { get { return 1f; } } }
 
     public class AudioSource : Behaviour
     {
+        public float pitch { get; set; }
+        public float minDistance { get; set; }
+        public float maxDistance { get; set; }
         public AudioClip clip { get; set; }
         public bool loop { get; set; }
         public bool playOnAwake { get; set; }
@@ -220,6 +254,9 @@ namespace UnityEngine
 
     public class Light : Behaviour
     {
+        public float shadowStrength { get; set; }
+        public float shadowBias { get; set; }
+        public float shadowNormalBias { get; set; }
         public LightType type { get; set; }
         public float intensity { get; set; }
         public Color color { get; set; }
@@ -230,6 +267,9 @@ namespace UnityEngine
 
     public class Camera : Behaviour
     {
+        public float fieldOfView { get; set; }
+        public float farClipPlane { get; set; }
+        public bool allowHDR { get; set; }
         public static Camera main { get { return null; } }
         public CameraClearFlags clearFlags { get; set; }
         public Color backgroundColor { get; set; }
@@ -276,6 +316,7 @@ namespace UnityEngine
 
     public static class Random
     {
+        public static float Range(float min, float max) { return min; }
         public static int Range(int min, int max) { return min; }
     }
 
@@ -301,10 +342,21 @@ namespace UnityEngine
         public static float GetAxisRaw(string axis) { return 0f; }
     }
 
+    public enum FogMode { Linear, Exponential, ExponentialSquared }
+
     public static class RenderSettings
     {
         public static Rendering.AmbientMode ambientMode { get; set; }
         public static Color ambientLight { get; set; }
+        public static Color ambientSkyColor { get; set; }
+        public static Color ambientEquatorColor { get; set; }
+        public static Color ambientGroundColor { get; set; }
+        public static float ambientIntensity { get; set; }
+        public static bool fog { get; set; }
+        public static FogMode fogMode { get; set; }
+        public static Color fogColor { get; set; }
+        public static float fogDensity { get; set; }
+        public static Rendering.DefaultReflectionMode defaultReflectionMode { get; set; }
     }
 
     public enum FontStyle { Normal, Bold, Italic, BoldAndItalic }
@@ -386,6 +438,8 @@ namespace UnityEngine
 namespace UnityEngine.Rendering
 {
     public enum AmbientMode { Skybox, Trilight, Flat, Custom }
+
+    public enum DefaultReflectionMode { Skybox, Custom }
     public enum ShadowCastingMode { Off, On, TwoSided, ShadowsOnly }
 }
 

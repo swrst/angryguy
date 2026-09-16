@@ -95,9 +95,11 @@ namespace AngryGuy.UnityLayer
                     cameraObject.tag = "MainCamera";
                 }
 
-                _camera.clearFlags = CameraClearFlags.SolidColor;
-                _camera.backgroundColor = new Color(0.14f, 0.16f, 0.2f);
-                _camera.nearClipPlane = 0.05f;
+                // A longer lens flattens perspective and makes the room read as
+                // a miniature set seen from outside. It is also the framing the
+                // comedy needs: the target, the object and the witness all have
+                // to be in shot at once, and a wide close camera hides the joke.
+                StageLighting.ApplyCamera(_camera);
             }
 
             _controller.enabled = false;
@@ -322,7 +324,7 @@ namespace AngryGuy.UnityLayer
             }
 
             Quaternion orbit = Quaternion.Euler(_pitch, _yaw, 0f);
-            Vector3 desired = head + orbit * new Vector3(0.45f, 0f, -5.0f) + Vector3.up * 1.0f;
+            Vector3 desired = head + orbit * new Vector3(0.5f, 0f, -6.6f) + Vector3.up * 1.6f;
 
             // Keep the camera out of walls without a full collision solve.
             Vector3 direction = desired - head;

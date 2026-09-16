@@ -212,7 +212,49 @@ namespace AngryGuy.UnityLayer
             if (line.Length > 34 || line.ToUpperInvariant() == line) length = "long";
 
             float volume = length == "long" ? 0.85f : 0.55f;
-            At("voice_" + profile + "_" + length, LevelView.ToSim(LevelView.ToUnity(npc.Position)), volume);
+
+            // Pitch and rate come straight off the same state the animation
+            // reads, so the voice and the body are never saying different
+            // things. Angry is lower and faster; embarrassed is higher and
+            // quieter; wary is slower, which reads as someone choosing words.
+            float pitch = 1f;
+            pitch -= npc.Anger * 0.22f;
+            pitch += npc.Mind.Embarrassment * 0.18f;
+            pitch += npc.Mind.Fear * 0.12f;
+
+            float rate = 1f + npc.Anger * 0.3f - npc.Mind.Wariness * 0.22f;
+
+            if (npc.Mind.Embarrassment > 0.4f) volume *= 0.7f;
+            if (npc.Anger > 0.7f) volume = Mathf.Min(1f, volume * 1.35f);
+
+            Voice("voice_" + profile + "_" + length,
+                LevelView.ToUnity(npc.Position),
+                volume,
+                Mathf.Clamp(pitch * rate, 0.65f, 1.6f));
+        }
+
+        /// <summary>
+        /// A one-shot with a pitch on it. PlayClipAtPoint cannot do pitch, so
+        /// this makes its own source and cleans up after itself.
+        /// </summary>
+        private void Voice(string clipName, Vector3 at, float volume, float pitch)
+        {
+            AudioClip clip;
+            if (!_clips.TryGetValue(clipName, out clip) || clip == null) return;
+
+            GameObject holder = new GameObject("Voice");
+            holder.transform.position = at;
+
+            AudioSource source = holder.AddComponent<AudioSource>();
+            source.clip = clip;
+            source.volume = volume;
+            source.pitch = pitch;
+            source.spatialBlend = 0.75f;
+            source.minDistance = 2f;
+            source.maxDistance = 26f;
+            source.Play();
+
+            Destroy(holder, clip.length / Mathf.Max(0.1f, pitch) + 0.2f);
         }
 
         private static string VoiceProfileFor(Npc npc)
@@ -224,6 +266,7 @@ namespace AngryGuy.UnityLayer
                 case "dishwasher": return "soft";
                 case "sous chef": return "flat";
                 case "kitchen porter": return "reedy";
+                case "deputy head": return "flat";
                 default: return "crisp";
             }
         }
