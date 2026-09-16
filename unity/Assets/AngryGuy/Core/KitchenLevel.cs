@@ -7,9 +7,10 @@ namespace AngryGuy.Core
     ///
     /// Target: make Gordon (the chef) furious without him working out it was you.
     ///
-    /// Nothing here is a scripted solution. Each object simply advertises what
-    /// it offers and what state it is in. The "puzzle" is whatever the player
-    /// works out from those parts.
+    /// Most of this file is composition - pulling generic props out of
+    /// ItemCatalogue and placing them. Only the bespoke interplay lives here: the
+    /// stove that needs *that* pan, and the salt that ruins *that* dish.
+    /// Everything else is reusable in the next level.
     /// </summary>
     public static class KitchenLevel
     {
@@ -26,12 +27,16 @@ namespace AngryGuy.Core
             public const string Toilet = "toilet";
             public const string Radio = "radio";
             public const string Table = "table";
-            public const string Chair = "chair";
             public const string Coffee = "coffee";
             public const string Desk = "desk";
             public const string Door = "door";
             public const string Pantry = "pantry";
             public const string Booth = "booth";
+            public const string Locker = "locker";
+            public const string Lights = "lights";
+            public const string Alarm = "alarm";
+            public const string Bucket = "bucket";
+            public const string Plant = "plant";
 
             public const string Chef = "chef";
             public const string Waiter = "waiter";
@@ -51,18 +56,26 @@ namespace AngryGuy.Core
             world.Walls.Add(new Wall(0f, -10f, 0f, -1.2f));
             world.Walls.Add(new Wall(0f, 1.2f, 0f, 10f));
 
-            world.Zones.Add(new Zone { Id = "kitchen", Name = "Kitchen", Center = new Vec3(-5f, 0f, 1f), Radius = 4.5f });
+            // The one way between the two halves. Everything routes through here.
+            world.Portals.Add(new Vec3(0f, 0f, 0f));
+
+            // StaffOnly is what gives a stolen uniform a job to do: in your own
+            // clothes, simply standing in the kitchen is slowly incriminating.
+            world.Zones.Add(new Zone { Id = "kitchen", Name = "Kitchen", Center = new Vec3(-5f, 0f, 1f), Radius = 4.5f, StaffOnly = true });
+            world.Zones.Add(new Zone { Id = "washup", Name = "Wash-up", Center = new Vec3(-7f, 0f, 6f), Radius = 2.5f, StaffOnly = true });
             world.Zones.Add(new Zone { Id = "dining", Name = "Dining room", Center = new Vec3(5f, 0f, 1f), Radius = 4.5f });
-            world.Zones.Add(new Zone { Id = "washup", Name = "Wash-up", Center = new Vec3(-7f, 0f, 6f), Radius = 2.5f });
             world.Zones.Add(new Zone { Id = "floor", Name = "Front of house", Center = new Vec3(3f, 0f, -4f), Radius = 4.5f });
             world.Zones.Add(new Zone { Id = "exit", Name = "Back door", Center = new Vec3(-8.5f, 0f, 8.5f), Radius = 1.6f });
+            world.Zones.Add(new Zone { Id = "assembly", Name = "Out front", Center = new Vec3(8.4f, 0f, -8.4f), Radius = 2f });
 
             BuildObjects(sim, world);
             BuildNpcs(sim, world);
 
             sim.TargetNpcId = Ids.Chef;
             sim.ExitZoneId = "exit";
+            sim.AssemblyZoneId = "assembly";
             sim.Player.Position = new Vec3(4f, 0f, -6f);
+            sim.Player.Outfit = Outfit.Civilian();
 
             sim.Log("Objective: make Gordon furious. Don't let anyone pin it on you. Then use the back door.");
             return sim;
@@ -74,38 +87,54 @@ namespace AngryGuy.Core
 
         private static void BuildObjects(Simulation sim, World world)
         {
+            // --- bespoke to this level -------------------------------------
             world.Add(BuildStove(world));
             world.Add(BuildPan());
             world.Add(BuildFridge());
             world.Add(BuildSalt());
             world.Add(BuildOil());
             world.Add(BuildBell());
-            world.Add(BuildBin());
-            world.Add(BuildSink());
-            world.Add(BuildToilet());
-            world.Add(BuildRadio());
-            world.Add(BuildTable());
-            world.Add(BuildDoor(world));
-            world.Add(BuildHidingSpot(Ids.Pantry, "pantry", new Vec3(-8.6f, 0f, 1.6f)));
-            world.Add(BuildHidingSpot(Ids.Booth, "corner booth", new Vec3(8.4f, 0f, 4.6f)));
             world.Add(BuildCoffeeMachine());
             world.Add(BuildDesk());
-            world.Add(BuildChair("chair_a", new Vec3(4f, 0f, 2.4f)));
-            world.Add(BuildChair("chair_b", new Vec3(6.2f, 0f, 2.4f)));
 
-            // Kitchen staff need somewhere to take the weight off on their own side
-            // of the wall, or they spend the whole service walking to the dining room.
-            world.Add(BuildChair("stool", new Vec3(-3.4f, 0f, 5.2f)));
+            // --- straight out of the catalogue ------------------------------
+            world.Add(ItemCatalogue.Bin(Ids.Bin, new Vec3(-8.2f, 0f, 4.6f)));
+            world.Add(ItemCatalogue.Sink(Ids.Sink, new Vec3(-7f, 0f, 6.4f), Ids.Dishwasher));
+            world.Add(ItemCatalogue.Toilet(Ids.Toilet, new Vec3(-2f, 0f, -7.6f), "staff toilet"));
+            world.Add(ItemCatalogue.Radio(Ids.Radio, new Vec3(7.4f, 0f, -3f)));
+            world.Add(ItemCatalogue.Table(Ids.Table, new Vec3(5.2f, 0f, 2.4f), "dining table"));
+            world.Add(ItemCatalogue.Door(Ids.Door, new Vec3(0f, 0f, 0f), new Wall(0f, -1.2f, 0f, 1.2f), world));
+
+            world.Add(ItemCatalogue.HidingSpot(Ids.Pantry, "pantry", new Vec3(-8.6f, 0f, 1.6f)));
+            world.Add(ItemCatalogue.HidingSpot(Ids.Booth, "corner booth", new Vec3(8.4f, 0f, 4.6f)));
+
+            world.Add(ItemCatalogue.Chair("chair_a", new Vec3(4f, 0f, 2.4f)));
+            world.Add(ItemCatalogue.Chair("chair_b", new Vec3(6.2f, 0f, 2.4f)));
+
+            // Kitchen staff need somewhere to take the weight off on their own
+            // side of the wall, or they cross the level for every sit-down.
+            world.Add(ItemCatalogue.Chair("stool", new Vec3(-3.4f, 0f, 5.2f), "stool"));
+
+            // --- the newer toys ---------------------------------------------
+            world.Add(ItemCatalogue.Locker(Ids.Locker, new Vec3(-8.2f, 0f, 3f),
+                new[] { "whites", "apron", "overalls" }));
+            world.Add(ItemCatalogue.LightSwitch(Ids.Lights, new Vec3(-0.9f, 0f, 1.9f)));
+            world.Add(ItemCatalogue.FireAlarm(Ids.Alarm, new Vec3(5.5f, 0f, -6f)));
+            world.Add(ItemCatalogue.MopBucket(Ids.Bucket, new Vec3(-6.2f, 0f, 7.2f)));
+            world.Add(ItemCatalogue.Plant(Ids.Plant, new Vec3(7.5f, 0f, 3.5f)));
         }
 
+        /// <summary>
+        /// The heart of the level. Everything about the stove is built around
+        /// Gordon believing it will work right up until he is standing at it.
+        /// </summary>
         private static SmartObject BuildStove(World world)
         {
-            SmartObject stove = At(Ids.Stove, "stove", new Vec3(-6f, 0f, 3f));
+            SmartObject stove = ItemCatalogue.Make(Ids.Stove, "stove", new Vec3(-6f, 0f, 3f),
+                new Vec3(1.6f, 1.0f, 0.9f));
             stove.OwnerId = Ids.Chef;
-            stove.Size = new Vec3(1.6f, 1.0f, 0.9f);
             stove.WithTag(Tags.Appliance).WithState(StateKeys.Broken, 0f).WithState(StateKeys.Heat, 0.5f);
 
-            // --- NPC side ---------------------------------------------------
             stove.WithAffordance(new Affordance
             {
                 Id = "cook",
@@ -132,7 +161,7 @@ namespace AngryGuy.Core
                     ctx.Object.SetState(StateKeys.Cooking, 1f);
                     string cookId = ctx.ActorId;
 
-                    // The payoff lands later. If the salt was swapped an hour ago,
+                    // The payoff lands later. If the salt was swapped minutes ago,
                     // this is the moment it detonates.
                     ctx.Sim.Schedule(14f, "dish finishes", delegate(Simulation s)
                     {
@@ -146,9 +175,6 @@ namespace AngryGuy.Core
 
                         Npc cook = s.World.GetNpc(cookId);
 
-                        // Ground truth of who is responsible. NPCs still have to
-                        // work it out for themselves - this only matters if someone
-                        // happens to be watching the player when it lands.
                         string culprit = "";
                         if (saltRuined && salt.GetState("tamperedBy") > 0.5f) culprit = PlayerAvatar.PlayerId;
                         else if (burned && ctx.Object.GetState("heatSetBy") > 0.5f) culprit = PlayerAvatar.PlayerId;
@@ -171,6 +197,10 @@ namespace AngryGuy.Core
                                 : "the dish is completely inedible - it's all sugar"
                         });
 
+                        s.Announce(FeedbackKind.Payoff, burned
+                            ? "The dish is burnt - that heat you turned up has landed"
+                            : "The sugar in the salt shaker has just been served up");
+
                         if (cook != null)
                         {
                             cook.Say(burned
@@ -192,7 +222,6 @@ namespace AngryGuy.Core
                 ArrivalPrecondition = delegate(SmartObject o, Npc npc) { return !o.IsBroken; }
             });
 
-            // --- Player side ------------------------------------------------
             stove.WithAffordance(new Affordance
             {
                 Id = "crank_heat",
@@ -209,7 +238,8 @@ namespace AngryGuy.Core
                 {
                     ctx.Object.SetState(StateKeys.Heat, 1f);
                     ctx.Object.SetState("heatSetBy", 1f);
-                    ctx.Sim.Log("You quietly turn the burner to maximum.");
+                    ctx.Sim.Announce(FeedbackKind.Info,
+                        "Burner on maximum - whatever he cooks next is ruined");
                 }
             });
 
@@ -246,20 +276,20 @@ namespace AngryGuy.Core
 
         private static SmartObject BuildPan()
         {
-            SmartObject pan = At(Ids.Pan, "good pan", new Vec3(-6f, 0f, 2.1f));
+            SmartObject pan = ItemCatalogue.Make(Ids.Pan, "good pan", new Vec3(-6f, 0f, 2.1f),
+                new Vec3(0.45f, 0.18f, 0.45f));
             pan.OwnerId = Ids.Chef;
             pan.Portable = true;
-            pan.Size = new Vec3(0.45f, 0.18f, 0.45f);
             pan.WithTag(Tags.Tool);
-            AddCarryAffordances(pan, 0.65f, 0.5f);
+            ItemCatalogue.AddCarryVerbs(pan, 0.65f, 0.5f);
             return pan;
         }
 
         private static SmartObject BuildFridge()
         {
-            SmartObject fridge = At(Ids.Fridge, "fridge", new Vec3(-8.4f, 0f, -2f));
+            SmartObject fridge = ItemCatalogue.Make(Ids.Fridge, "fridge", new Vec3(-8.4f, 0f, -2f),
+                new Vec3(1f, 2f, 0.9f));
             fridge.OwnerId = Ids.Chef;
-            fridge.Size = new Vec3(1f, 2f, 0.9f);
             fridge.WithTag(Tags.Container).WithTag(Tags.Food).WithState(StateKeys.Contents, 3f);
 
             fridge.WithAffordance(new Affordance
@@ -271,7 +301,11 @@ namespace AngryGuy.Core
                 BaseAppeal = 1.2f,
                 Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Hunger, 0.7f) },
                 ArrivalPrecondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Contents) > 0f; },
-                Effect = delegate(AffordanceContext ctx) { ctx.Object.AddState(StateKeys.Contents, -1f); }
+                Effect = delegate(AffordanceContext ctx)
+                {
+                    ctx.Object.AddState(StateKeys.Contents, -1f);
+                    Restock(ctx.Sim, ctx.Object, 3f, 70f, "a delivery arrives");
+                }
             });
 
             fridge.WithAffordance(new Affordance
@@ -286,6 +320,7 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.SetState(StateKeys.Contents, 0f);
+                    ctx.Object.SetState("drainedByPlayer", 1f);
                     ctx.Sim.Publish(new WorldEvent
                     {
                         Kind = EventKind.ObjectTampered,
@@ -316,14 +351,16 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.SetState("doorOpen", 1f);
-                    ctx.Sim.Log("You leave the fridge door hanging open. Give it a minute.");
+                    ctx.Sim.Announce(FeedbackKind.Info, "Fridge door left open. Give it a minute.");
 
-                    // Slow, deniable, and by the time it matters you are elsewhere.
                     ctx.Sim.Schedule(55f, "fridge spoils", delegate(Simulation s)
                     {
                         if (ctx.Object.GetState("doorOpen") <= 0f) return;
                         ctx.Object.SetState(StateKeys.Contents, 0f);
+                        ctx.Object.SetState("drainedByPlayer", 1f);
                         ctx.Object.SetState("doorOpen", 0f);
+
+                        s.Announce(FeedbackKind.Payoff, "Everything in the fridge has spoiled");
                         s.Publish(new WorldEvent
                         {
                             Kind = EventKind.ObjectTampered,
@@ -345,10 +382,10 @@ namespace AngryGuy.Core
 
         private static SmartObject BuildSalt()
         {
-            SmartObject salt = At(Ids.Salt, "salt shaker", new Vec3(-4.6f, 0f, 1.4f));
+            SmartObject salt = ItemCatalogue.Make(Ids.Salt, "salt shaker", new Vec3(-4.6f, 0f, 1.4f),
+                new Vec3(0.2f, 0.3f, 0.2f));
             salt.OwnerId = Ids.Chef;
             salt.Portable = true;
-            salt.Size = new Vec3(0.2f, 0.3f, 0.2f);
             salt.WithTag(Tags.Ingredient);
 
             salt.WithAffordance(new Affordance
@@ -365,19 +402,20 @@ namespace AngryGuy.Core
                     ctx.Object.SetState(StateKeys.Tampered, 1f);
                     ctx.Object.SetState(StateKeys.Subtle, 1f);
                     ctx.Object.SetState("tamperedBy", 1f);
-                    ctx.Sim.Log("Sugar in the salt shaker. Nobody will know until it's cooked.");
+                    ctx.Sim.Announce(FeedbackKind.Info,
+                        "Sugar in the salt shaker. Nobody knows until it's cooked.");
                 }
             });
 
-            AddCarryAffordances(salt, 0.4f, 0.35f);
+            ItemCatalogue.AddCarryVerbs(salt, 0.4f, 0.35f);
             return salt;
         }
 
         private static SmartObject BuildOil()
         {
-            SmartObject oil = At(Ids.Oil, "oil bottle", new Vec3(-4.2f, 0f, -2.6f));
+            SmartObject oil = ItemCatalogue.Make(Ids.Oil, "oil bottle", new Vec3(-4.2f, 0f, -2.6f),
+                new Vec3(0.22f, 0.45f, 0.22f));
             oil.Portable = true;
-            oil.Size = new Vec3(0.22f, 0.45f, 0.22f);
             oil.WithTag(Tags.Tool).WithState(StateKeys.Contents, 1f);
 
             oil.WithAffordance(new Affordance
@@ -392,54 +430,22 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.SetState(StateKeys.Contents, 0f);
-
-                    Vec3 where = ctx.Sim.Player.Position;
-                    SmartObject slick = At("slick_" + ctx.Sim.Events.Log.Count, "oil slick", where);
-                    slick.Size = new Vec3(1.2f, 0.02f, 1.2f);
-                    slick.WithTag(Tags.Mess).WithTag(Tags.Hazard);
-
-                    slick.WithAffordance(new Affordance
-                    {
-                        Id = "mop",
-                        Verb = "Mop up",
-                        Actors = ActorKind.Npc,
-                        Duration = 6f,
-                        Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Order, 0.5f) },
-                        Effect = delegate(AffordanceContext c)
-                        {
-                            c.Object.Tags.Remove(Tags.Hazard);
-                            c.Object.Concealed = true;
-                            c.Sim.Log(c.Npc.Name + " mops up the " + c.Object.Name + ".");
-                        }
-                    });
-
-                    ctx.Sim.World.Add(slick);
-                    ctx.Sim.Publish(new WorldEvent
-                    {
-                        Kind = EventKind.SpillCreated,
-                        Position = where,
-                        TrueActorId = ctx.ActorId,
-                        ObjectId = slick.Id,
-                        Loudness = 0.1f,
-                        Severity = 0.4f,
-                        LeavesEvidence = true,
-                        Description = "there is oil all over the floor"
-                    });
+                    ItemCatalogue.Spill(ctx.Sim, ctx.Sim.Player.Position, ctx.ActorId, "oil");
                 }
             });
 
-            AddCarryAffordances(oil, 0.3f, 0.25f);
+            ItemCatalogue.AddCarryVerbs(oil, 0.3f, 0.25f);
             return oil;
         }
 
         private static SmartObject BuildBell()
         {
-            SmartObject bell = At(Ids.Bell, "service bell", new Vec3(1.2f, 0f, 0.6f));
-            bell.Size = new Vec3(0.25f, 0.25f, 0.25f);
+            SmartObject bell = ItemCatalogue.Make(Ids.Bell, "service bell", new Vec3(1.2f, 0f, 0.6f),
+                new Vec3(0.25f, 0.25f, 0.25f));
             bell.WithTag(Tags.Noisy);
 
-            // The lure. Almost no suspicion attached: ringing a bell is not a crime,
-            // it just puts everyone somewhere else for twenty seconds.
+            // The lure. Almost no suspicion attached: ringing a bell is not a
+            // crime, it just puts everyone somewhere else for twenty seconds.
             bell.WithAffordance(new Affordance
             {
                 Id = "ring",
@@ -453,7 +459,6 @@ namespace AngryGuy.Core
                     {
                         Kind = EventKind.Noise,
                         Position = ctx.Object.Position,
-                        TrueActorId = "",
                         ObjectId = ctx.Object.Id,
                         Loudness = 0.95f,
                         Severity = 0.1f,
@@ -465,380 +470,14 @@ namespace AngryGuy.Core
             return bell;
         }
 
-        private static SmartObject BuildBin()
-        {
-            SmartObject bin = At(Ids.Bin, "bin", new Vec3(-8.2f, 0f, 4.6f));
-            bin.Size = new Vec3(0.7f, 1f, 0.7f);
-            bin.WithTag(Tags.Container).WithState(StateKeys.Dirty, 1f);
-
-            bin.WithAffordance(new Affordance
-            {
-                Id = "stash",
-                Verb = "Stash what you're holding in the",
-                Actors = ActorKind.Player,
-                Duration = 1.5f,
-                Incrimination = 0.45f,
-                Precondition = delegate(SmartObject o, Npc npc) { return true; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    Simulation sim = ctx.Sim;
-                    if (!sim.Player.IsCarrying)
-                    {
-                        sim.Log("Your hands are empty.");
-                        return;
-                    }
-
-                    SmartObject held = sim.World.GetObject(sim.Player.CarryingObjectId);
-                    if (held == null) return;
-
-                    held.HeldBy = "";
-                    held.Concealed = true;
-                    held.Position = ctx.Object.Position;
-                    held.SetState("inBin", 1f);
-                    sim.Player.CarryingObjectId = "";
-                    sim.Log("You drop the " + held.Name + " in the bin.");
-                }
-            });
-
-            // A tidy NPC emptying the bin will undo the player's hiding place.
-            // The world pushing back is what stops one trick solving every level.
-            bin.WithAffordance(new Affordance
-            {
-                Id = "empty_bin",
-                Verb = "Empty the",
-                Actors = ActorKind.Npc,
-                Duration = 7f,
-                BaseAppeal = 0.9f,
-                Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Order, 0.45f) },
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Dirty) > 0f; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState(StateKeys.Dirty, 0f);
-                    Simulation sim = ctx.Sim;
-
-                    for (int i = 0; i < sim.World.Objects.Count; i++)
-                    {
-                        SmartObject o = sim.World.Objects[i];
-                        if (o.GetState("inBin") <= 0f) continue;
-
-                        o.SetState("inBin", 0f);
-                        o.Concealed = false;
-                        o.Position = ctx.Object.Position;
-
-                        sim.Publish(new WorldEvent
-                        {
-                            Kind = EventKind.Discovery,
-                            Position = ctx.Object.Position,
-                            TrueActorId = "",
-                            ObjectId = o.Id,
-                            VictimId = o.OwnerId,
-                            Loudness = 0.5f,
-                            Severity = 0.6f,
-                            LeavesEvidence = true,
-                            Description = ctx.Npc.Name + " finds the " + o.Name + " in the bin"
-                        });
-
-                        ctx.Npc.Say("Why is the " + o.Name + " in the BIN?");
-                    }
-
-                    // Bins fill up again, so this stays available all level.
-                    sim.Schedule(45f, "bin fills up", delegate(Simulation s)
-                    {
-                        ctx.Object.SetState(StateKeys.Dirty, 1f);
-                    });
-                }
-            });
-
-            return bin;
-        }
-
-        private static SmartObject BuildSink()
-        {
-            SmartObject sink = At(Ids.Sink, "sink", new Vec3(-7f, 0f, 6.4f));
-            sink.OwnerId = Ids.Dishwasher;
-            sink.Size = new Vec3(1.4f, 0.9f, 0.7f);
-            sink.WithTag(Tags.Appliance).WithState(StateKeys.Broken, 0f);
-
-            sink.WithAffordance(new Affordance
-            {
-                Id = "wash",
-                Verb = "Wash up at",
-                Actors = ActorKind.Npc,
-                Duration = 10f,
-                Noise = 0.2f,
-                BaseAppeal = 1.25f,
-                Satisfies = new List<NeedDelta>
-                {
-                    new NeedDelta(NeedType.Order, 0.6f),
-                    new NeedDelta(NeedType.Comfort, 0.25f)
-                },
-                ArrivalPrecondition = delegate(SmartObject o, Npc npc) { return !o.IsBroken; }
-            });
-
-            sink.WithAffordance(new Affordance
-            {
-                Id = "block_sink",
-                Verb = "Jam a rag into",
-                Actors = ActorKind.Player,
-                IsSabotage = true,
-                Duration = 2.5f,
-                Incrimination = 0.6f,
-                Precondition = delegate(SmartObject o, Npc npc) { return !o.IsBroken; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState(StateKeys.Broken, 1f);
-                    ctx.Sim.Publish(new WorldEvent
-                    {
-                        Kind = EventKind.ObjectBroken,
-                        Position = ctx.Object.Position,
-                        TrueActorId = ctx.ActorId,
-                        ObjectId = ctx.Object.Id,
-                        VictimId = ctx.Object.OwnerId,
-                        Loudness = 0.2f,
-                        Severity = 0.6f,
-                        LeavesEvidence = true,
-                        Description = "the sink is blocked and overflowing"
-                    });
-                }
-            });
-
-            return sink;
-        }
-
-        private static SmartObject BuildToilet()
-        {
-            SmartObject toilet = At(Ids.Toilet, "staff toilet", new Vec3(-2f, 0f, -7.6f));
-            toilet.Size = new Vec3(0.7f, 1f, 0.7f);
-            toilet.WithTag(Tags.Toilet).WithState(StateKeys.Broken, 0f);
-
-            toilet.WithAffordance(new Affordance
-            {
-                Id = "use_toilet",
-                Verb = "Use the",
-                Actors = ActorKind.Npc,
-                Duration = 6f,
-                BaseAppeal = 1.4f,
-                Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Bladder, 0.95f) },
-                ArrivalPrecondition = delegate(SmartObject o, Npc npc) { return !o.IsBroken; }
-            });
-
-            toilet.WithAffordance(new Affordance
-            {
-                Id = "block_toilet",
-                Verb = "Block the",
-                Actors = ActorKind.Player,
-                IsSabotage = true,
-                Duration = 3f,
-                Incrimination = 0.4f,
-                Precondition = delegate(SmartObject o, Npc npc) { return !o.IsBroken; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState(StateKeys.Broken, 1f);
-                    ctx.Sim.Publish(new WorldEvent
-                    {
-                        Kind = EventKind.ObjectBroken,
-                        Position = ctx.Object.Position,
-                        TrueActorId = ctx.ActorId,
-                        ObjectId = ctx.Object.Id,
-                        Loudness = 0.15f,
-                        Severity = 0.5f,
-                        LeavesEvidence = true,
-                        Description = "the staff toilet is blocked"
-                    });
-                }
-            });
-
-            return toilet;
-        }
-
-        private static SmartObject BuildRadio()
-        {
-            SmartObject radio = At(Ids.Radio, "radio", new Vec3(7.4f, 0f, -3f));
-            radio.Size = new Vec3(0.5f, 0.3f, 0.3f);
-            radio.WithTag(Tags.Social).WithState(StateKeys.Volume, 0.3f);
-
-            radio.WithAffordance(new Affordance
-            {
-                Id = "listen",
-                Verb = "Listen to the",
-                Actors = ActorKind.Npc,
-                Duration = 8f,
-                Satisfies = new List<NeedDelta>
-                {
-                    new NeedDelta(NeedType.Comfort, 0.4f),
-                    new NeedDelta(NeedType.Social, 0.2f)
-                },
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Volume) < 0.9f; }
-            });
-
-            radio.WithAffordance(new Affordance
-            {
-                Id = "crank_radio",
-                Verb = "Crank up the",
-                Actors = ActorKind.Player,
-                IsSabotage = true,
-                Duration = 1f,
-                Incrimination = 0.3f,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Volume) < 0.9f; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState(StateKeys.Volume, 1f);
-                    ScheduleRacket(ctx.Sim, ctx.Object, 6);
-                }
-            });
-
-            radio.WithAffordance(new Affordance
-            {
-                Id = "turn_down",
-                Verb = "Turn down the",
-                Actors = ActorKind.Npc,
-                Duration = 2f,
-                Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Order, 0.35f) },
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Volume) >= 0.9f; },
-                Effect = delegate(AffordanceContext ctx) { ctx.Object.SetState(StateKeys.Volume, 0.3f); }
-            });
-
-            return radio;
-        }
-
-        private static void ScheduleRacket(Simulation sim, SmartObject radio, int repeats)
-        {
-            if (repeats <= 0) return;
-
-            sim.Schedule(7f, "radio blares", delegate(Simulation s)
-            {
-                if (radio.GetState(StateKeys.Volume) < 0.9f) return;
-
-                s.Publish(new WorldEvent
-                {
-                    Kind = EventKind.Noise,
-                    Position = radio.Position,
-                    TrueActorId = "",
-                    ObjectId = radio.Id,
-                    Loudness = 0.75f,
-                    Severity = 0.15f,
-                    Description = "the radio is blaring"
-                });
-
-                for (int i = 0; i < s.World.Npcs.Count; i++)
-                {
-                    Npc npc = s.World.Npcs[i];
-                    if (Vec3.FlatDistance(npc.Position, radio.Position) > 9f) continue;
-                    AngerModel.Add(npc, AngerModel.DisorderSeen(npc, 0.5f), s, "that bloody radio");
-                }
-
-                ScheduleRacket(s, radio, repeats - 1);
-            });
-        }
-
-        private static SmartObject BuildTable()
-        {
-            SmartObject table = At(Ids.Table, "dining table", new Vec3(5.2f, 0f, 2.4f));
-            table.Size = new Vec3(2.2f, 0.8f, 1.2f);
-            table.WithState(StateKeys.Dirty, 1f);
-
-            table.WithAffordance(new Affordance
-            {
-                Id = "wipe",
-                Verb = "Wipe down the",
-                Actors = ActorKind.Npc,
-                Duration = 6f,
-                Satisfies = new List<NeedDelta> { new NeedDelta(NeedType.Order, 0.4f) },
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState(StateKeys.Dirty) > 0f; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState(StateKeys.Dirty, 0f);
-                    ctx.Sim.Schedule(40f, "table gets dirty", delegate(Simulation s)
-                    {
-                        ctx.Object.SetState(StateKeys.Dirty, 1f);
-                    });
-                }
-            });
-
-            return table;
-        }
-
         /// <summary>
-        /// The swing door in the only gap between kitchen and dining room.
-        /// Shutting it is the cheapest, least incriminating thing in the level:
-        /// it costs nothing, looks like nothing, and blinds half the cast.
-        /// </summary>
-        private static SmartObject BuildDoor(World world)
-        {
-            SmartObject door = At(Ids.Door, "swing door", new Vec3(0f, 0f, 0f));
-            door.Size = new Vec3(0.2f, 2.1f, 2.2f);
-            door.WithTag(Tags.Door).WithState("open", 1f);
-
-            door.WithAffordance(new Affordance
-            {
-                Id = "close_door",
-                Verb = "Close the",
-                Actors = ActorKind.Player,
-                Duration = 0.8f,
-                Noise = 0.25f,
-                Incrimination = 0.05f,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState("open") > 0f; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.SetState("open", 0f);
-                    ctx.Sim.Announce(FeedbackKind.Info, "Door shut - the kitchen can't see the dining room now");
-                }
-            });
-
-            door.WithAffordance(new Affordance
-            {
-                Id = "open_door",
-                Verb = "Open the",
-                Actors = ActorKind.Player,
-                Duration = 0.8f,
-                Noise = 0.25f,
-                Incrimination = 0.05f,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState("open") <= 0f; },
-                Effect = delegate(AffordanceContext ctx) { ctx.Object.SetState("open", 1f); }
-            });
-
-            world.Doors.Add(new DoorBlocker
-            {
-                Object = door,
-                Segment = new Wall(0f, -1.2f, 0f, 1.2f)
-            });
-
-            return door;
-        }
-
-        /// <summary>
-        /// Somewhere to wait out a search. Hiding costs the player all their
-        /// agency while they do it, which is what stops it being a free win.
-        /// </summary>
-        private static SmartObject BuildHidingSpot(string id, string name, Vec3 position)
-        {
-            SmartObject spot = At(id, name, position);
-            spot.Size = new Vec3(1.1f, 1.9f, 1.1f);
-            spot.WithTag(Tags.Hiding);
-
-            spot.WithAffordance(new Affordance
-            {
-                Id = "hide",
-                Verb = "Hide in the",
-                Actors = ActorKind.Player,
-                Duration = 0.6f,
-                Incrimination = 0.25f,
-                Precondition = delegate(SmartObject o, Npc npc) { return true; },
-                Effect = delegate(AffordanceContext ctx) { ctx.Sim.PlayerToggleHide(ctx.Object); }
-            });
-
-            return spot;
-        }
-
-        /// <summary>
-        /// Front-of-house needs its own facilities. Without these, Marie and Eva
-        /// spend the entire service walking into the kitchen for every need, which
-        /// both looks wrong and leaves the dining room empty.
+        /// Front-of-house needs its own facilities, or Marie and Eva spend the
+        /// whole service in the kitchen and the dining room stands empty.
         /// </summary>
         private static SmartObject BuildCoffeeMachine()
         {
-            SmartObject coffee = At(Ids.Coffee, "coffee machine", new Vec3(7.6f, 0f, 0.6f));
-            coffee.Size = new Vec3(0.6f, 0.7f, 0.5f);
+            SmartObject coffee = ItemCatalogue.Make(Ids.Coffee, "coffee machine", new Vec3(7.6f, 0f, 0.6f),
+                new Vec3(0.6f, 0.7f, 0.5f));
             coffee.WithTag(Tags.Appliance).WithTag(Tags.Food).WithState(StateKeys.Contents, 6f);
 
             coffee.WithAffordance(new Affordance
@@ -858,7 +497,11 @@ namespace AngryGuy.Core
                 {
                     return o.GetState(StateKeys.Contents) > 0f && !o.IsBroken;
                 },
-                Effect = delegate(AffordanceContext ctx) { ctx.Object.AddState(StateKeys.Contents, -1f); }
+                Effect = delegate(AffordanceContext ctx)
+                {
+                    ctx.Object.AddState(StateKeys.Contents, -1f);
+                    Restock(ctx.Sim, ctx.Object, 6f, 90f, "someone refills the water tank");
+                }
             });
 
             coffee.WithAffordance(new Affordance
@@ -873,6 +516,7 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.SetState(StateKeys.Contents, 0f);
+                    ctx.Object.SetState("drainedByPlayer", 1f);
                     ctx.Sim.Publish(new WorldEvent
                     {
                         Kind = EventKind.ObjectTampered,
@@ -892,9 +536,9 @@ namespace AngryGuy.Core
 
         private static SmartObject BuildDesk()
         {
-            SmartObject desk = At(Ids.Desk, "manager's desk", new Vec3(3.4f, 0f, -5.2f));
+            SmartObject desk = ItemCatalogue.Make(Ids.Desk, "manager's desk", new Vec3(3.4f, 0f, -5.2f),
+                new Vec3(1.4f, 0.8f, 0.8f));
             desk.OwnerId = Ids.Manager;
-            desk.Size = new Vec3(1.4f, 0.8f, 0.8f);
             desk.WithState(StateKeys.Tampered, 0f);
 
             desk.WithAffordance(new Affordance
@@ -946,30 +590,8 @@ namespace AngryGuy.Core
             return desk;
         }
 
-        private static SmartObject BuildChair(string id, Vec3 position)
-        {
-            SmartObject chair = At(id, "chair", position);
-            chair.Size = new Vec3(0.45f, 0.9f, 0.45f);
-            chair.WithTag(Tags.Seat);
-
-            chair.WithAffordance(new Affordance
-            {
-                Id = "sit",
-                Verb = "Sit on the",
-                Actors = ActorKind.Npc,
-                Duration = 9f,
-                Satisfies = new List<NeedDelta>
-                {
-                    new NeedDelta(NeedType.Comfort, 0.5f),
-                    new NeedDelta(NeedType.Energy, 0.35f)
-                }
-            });
-
-            return chair;
-        }
-
         // ------------------------------------------------------------------
-        // NPCs
+        // Cast
         // ------------------------------------------------------------------
 
         private static void BuildNpcs(Simulation sim, World world)
@@ -993,6 +615,25 @@ namespace AngryGuy.Core
             world.Add(waiter);
             world.Add(dish);
             world.Add(manager);
+
+            // Habits: the signature behaviours that make each of them legible.
+            // The player learns "Gordon is always back at that stove" and builds
+            // a plan around it.
+            chef.AddHabit(Ids.Stove, "cook", 2.2f);
+            chef.AddHabit(Ids.Stove, "taste", 1.9f);
+            chef.AddHabit(Ids.Fridge, "eat", 1.3f);
+
+            waiter.AddHabit(Ids.Table, "wipe", 2.0f);
+            waiter.AddHabit(Ids.Coffee, "coffee", 1.8f);
+            waiter.AddHabit(Ids.Radio, "listen", 1.4f);
+
+            dish.AddHabit(Ids.Sink, "wash", 2.4f);
+            dish.AddHabit(Ids.Bin, "empty_bin", 1.6f);
+
+            manager.AddHabit(Ids.Desk, "paperwork", 2.1f);
+            manager.AddHabit(Ids.Table, "wipe", 1.5f);
+            manager.AddHabit(Ids.Radio, "turn_down", 1.8f);
+            manager.AddHabit(Ids.Lights, "lights_on", 2.5f);
 
             // Seeded relationships. Gordon already half-blames Terry for everything,
             // which is exactly the crack the player can widen.
@@ -1023,82 +664,30 @@ namespace AngryGuy.Core
         }
 
         // ------------------------------------------------------------------
-        // Helpers
-        // ------------------------------------------------------------------
 
-        private static SmartObject At(string id, string name, Vec3 position)
+        /// <summary>
+        /// Refill a consumable a while after it runs dry. Without this the kitchen
+        /// slowly empties over a long level and NPCs get frustrated for reasons
+        /// the player had nothing to do with, which quietly breaks the rule that
+        /// any anger on screen is anger the player caused.
+        /// </summary>
+        private static void Restock(Simulation sim, SmartObject obj, float amount,
+            float delay, string description)
         {
-            return new SmartObject
+            if (obj.GetState(StateKeys.Contents) > 0f) return;
+            if (obj.GetState("restocking") > 0f) return;
+
+            obj.SetState("restocking", 1f);
+            sim.Schedule(delay, "restock " + obj.Id, delegate(Simulation s)
             {
-                Id = id,
-                Name = name,
-                Position = position,
-                HomePosition = position
-            };
-        }
+                obj.SetState("restocking", 0f);
 
-        private static void AddCarryAffordances(SmartObject obj, float takeIncrimination, float dropIncrimination)
-        {
-            obj.WithAffordance(new Affordance
-            {
-                Id = "take",
-                Verb = "Take the",
-                Actors = ActorKind.Player,
-                Duration = 0.8f,
-                Incrimination = takeIncrimination,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.HeldBy.Length == 0 && !o.Concealed; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    Simulation sim = ctx.Sim;
-                    if (sim.Player.IsCarrying)
-                    {
-                        sim.Log("You're already carrying something.");
-                        return;
-                    }
+                // A player who emptied it on purpose keeps their sabotage: only a
+                // naturally drained container refills.
+                if (obj.GetState("drainedByPlayer") > 0f) return;
 
-                    ctx.Object.HeldBy = sim.Player.Id;
-                    sim.Player.CarryingObjectId = ctx.Object.Id;
-
-                    sim.Publish(new WorldEvent
-                    {
-                        Kind = EventKind.ObjectTaken,
-                        Position = ctx.Object.HomePosition,
-                        TrueActorId = ctx.ActorId,
-                        ObjectId = ctx.Object.Id,
-                        VictimId = ctx.Object.OwnerId,
-                        Loudness = 0.1f,
-                        Severity = ctx.Object.OwnerId.Length > 0 ? 0.55f : 0.3f,
-                        LeavesEvidence = true,
-                        Description = "the " + ctx.Object.Name + " is missing"
-                    });
-                }
-            });
-
-            obj.WithAffordance(new Affordance
-            {
-                Id = "throw",
-                Verb = "Throw the",
-                Actors = ActorKind.Player,
-                Duration = 0.4f,
-                Incrimination = 0.4f,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.HeldBy == PlayerAvatar.PlayerId; },
-                Effect = delegate(AffordanceContext ctx) { ctx.Sim.PlayerThrow(); }
-            });
-
-            obj.WithAffordance(new Affordance
-            {
-                Id = "drop",
-                Verb = "Put down the",
-                Actors = ActorKind.Player,
-                Duration = 0.5f,
-                Incrimination = dropIncrimination,
-                Precondition = delegate(SmartObject o, Npc npc) { return o.HeldBy == PlayerAvatar.PlayerId; },
-                Effect = delegate(AffordanceContext ctx)
-                {
-                    ctx.Object.HeldBy = "";
-                    ctx.Object.Position = ctx.Sim.Player.Position;
-                    ctx.Sim.Player.CarryingObjectId = "";
-                }
+                obj.SetState(StateKeys.Contents, amount);
+                s.Log(description);
             });
         }
     }

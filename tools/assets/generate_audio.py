@@ -279,6 +279,70 @@ def tension_loop():
     return normalise(pulse * 0.8 + pad * 0.5, peak=0.6)
 
 
+# ----------------------------------------------------------------- voices
+
+# Four voice profiles, so the four members of staff are distinguishable with
+# your eyes shut. Not speech - a pitch, a rasp and a cadence, which is enough
+# for the player to know who just shouted in the next room.
+VOICE_PROFILES = {
+    "gruff": dict(base=92, wobble=0.05, growl=0.30, brightness=0.78),
+    "bright": dict(base=185, wobble=0.13, growl=0.05, brightness=1.30),
+    "soft": dict(base=128, wobble=0.04, growl=0.10, brightness=0.95),
+    "crisp": dict(base=150, wobble=0.08, growl=0.03, brightness=1.12),
+}
+
+
+def make_voice(profile, length):
+    """length: 'short' (a grunt), 'mid' (a mutter), 'long' (a shout)."""
+    settings = VOICE_PROFILES[profile]
+
+    if length == "short":
+        duration, gain, wobble_scale = 0.32, 0.8, 1.0
+    elif length == "mid":
+        duration, gain, wobble_scale = 0.85, 0.9, 1.2
+    else:
+        duration, gain, wobble_scale = 1.25, 1.0, 1.8
+
+    out = voice(
+        duration,
+        base=settings["base"] * (1.18 if length == "long" else 1.0),
+        wobble=settings["wobble"] * wobble_scale,
+        growl=settings["growl"] * (1.5 if length == "long" else 1.0),
+        brightness=settings["brightness"],
+    )
+
+    n = len(out)
+    # Syllables: chop the envelope into 1-3 bursts so it reads as speech rhythm
+    # rather than one continuous tone.
+    syllables = 1 if length == "short" else (2 if length == "mid" else 3)
+    shape = np.zeros(n)
+    for i in range(syllables):
+        start = int(n * i / syllables)
+        end = int(n * (i + 0.82) / syllables)
+        seg = end - start
+        if seg <= 0:
+            continue
+        shape[start:end] = np.sin(np.linspace(0, np.pi, seg)) ** 0.7
+
+    return env(out * shape * gain, attack=0.012, decay=0.2, sustain=0.6, release=0.2)
+
+
+def ambient_bed():
+    """Room tone: a quiet, slow, unobtrusive loop for when nothing is wrong."""
+    d = 4.0
+    n = int(RATE * d)
+    x = np.linspace(0, d, n, endpoint=False)
+
+    hum = sine(55, d) * 0.35 + sine(110, d) * 0.12
+    air = lowpass(rng.uniform(-1, 1, n), 700) * 0.25
+    sway = 0.7 + 0.3 * np.sin(2 * np.pi * 0.11 * x)
+
+    # A distant, slow chord that drifts in and out.
+    pad = (sine(220, d) * 0.18 + sine(329.63, d) * 0.12) * (0.4 + 0.6 * np.sin(2 * np.pi * 0.07 * x))
+
+    return normalise((hum + air) * sway + pad, peak=0.45)
+
+
 SOUNDS = {
     "footstep": footstep,
     "bell": bell,
@@ -297,11 +361,20 @@ SOUNDS = {
     "sting_payoff": sting_payoff,
     "blip": blip,
     "tension_loop": tension_loop,
+    "music_ambient": ambient_bed,
 }
 
 
 if __name__ == "__main__":
     print("Generating audio into", OUT)
+
     for name, fn in SOUNDS.items():
         save(name, fn())
-    print("done -", len(SOUNDS), "clips")
+
+    count = len(SOUNDS)
+    for profile in VOICE_PROFILES:
+        for length in ("short", "mid", "long"):
+            save("voice_{}_{}".format(profile, length), make_voice(profile, length))
+            count += 1
+
+    print("done -", count, "clips")

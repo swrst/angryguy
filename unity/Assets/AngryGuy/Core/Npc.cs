@@ -47,6 +47,7 @@ namespace AngryGuy.Core
         public float MoveSpeed = 2.6f;
 
         public Personality Personality = new Personality();
+        public Mind Mind = new Mind();
         public Needs Needs = new Needs();
         public NpcMemory Memory = new NpcMemory();
         public PerceptionModel Perception = new PerceptionModel();
@@ -78,6 +79,12 @@ namespace AngryGuy.Core
         public Vec3 MoveTarget;
         public float ActivityTimer;
 
+        /// <summary>How close they have ever got to the current target, for stuck detection.</summary>
+        public float ClosestApproach = float.MaxValue;
+
+        /// <summary>How long they have been failing to make progress toward it.</summary>
+        public float StuckTimer;
+
         /// <summary>Set while investigating: where they are heading to look.</summary>
         public Vec3 InvestigationPoint;
 
@@ -108,11 +115,38 @@ namespace AngryGuy.Core
         /// </summary>
         public float LastPlayerSuspicionTime = -99f;
 
+        /// <summary>Anger level at their last public explosion, so they need a fresh reason to do it again.</summary>
+        public float AngerAtLastOutburst = -1f;
+
         /// <summary>Last thing they said, surfaced in the HUD as a speech bubble.</summary>
         public string Speech = "";
         public float SpeechTimer;
 
         public bool IsTarget;
+
+        /// <summary>
+        /// Paranoia as it actually applies right now: their baseline plus however
+        /// convinced they have become that today's mishaps are deliberate. This
+        /// is what makes a level get harder the more you break.
+        /// </summary>
+        public float EffectiveParanoia
+        {
+            get { return Mathx.Clamp01(Personality.Paranoia + Mind.Wariness * 0.45f); }
+        }
+
+        /// <summary>Signature actions this NPC does more often than the numbers alone suggest.</summary>
+        public readonly Dictionary<string, float> Habits = new Dictionary<string, float>();
+
+        public float HabitWeight(string objectId, string affordanceId)
+        {
+            float weight;
+            return Habits.TryGetValue(objectId + ":" + affordanceId, out weight) ? weight : 1f;
+        }
+
+        public void AddHabit(string objectId, string affordanceId, float weight)
+        {
+            Habits[objectId + ":" + affordanceId] = weight;
+        }
 
         public float SuspicionOf(string actorId)
         {
@@ -162,6 +196,12 @@ namespace AngryGuy.Core
                 if (Anger >= 0.85f) return "FURIOUS";
                 if (Anger >= 0.6f) return "angry";
                 if (Anger >= 0.35f) return "irritated";
+
+                // Below real anger, what they are feeling is more interesting than
+                // "calm" - and it is what tells the player which lever to pull.
+                string emotion = Mind.DominantWord;
+                if (emotion.Length > 0) return emotion;
+
                 if (Anger >= 0.15f) return "bothered";
                 return "calm";
             }

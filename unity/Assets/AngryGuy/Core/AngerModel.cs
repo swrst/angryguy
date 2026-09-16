@@ -21,18 +21,24 @@ namespace AngryGuy.Core
             if (amount <= 0f) return false;
 
             // Each new problem lands harder while they are already wound up.
-            float scaled = amount * (1f + npc.Tension * 1.4f);
+            float scaled = amount * (1f + npc.Tension * 1.0f);
 
             float before = npc.Anger;
             npc.Anger = Mathx.Clamp01(npc.Anger + scaled);
             if (npc.Anger > npc.PeakAnger) npc.PeakAnger = npc.Anger;
+
+            // Report what actually LANDED, not what was requested. Once anger is
+            // pinned at the ceiling the honest answer is "+0", and telling the
+            // player "+37 ANGER" while nothing changes is a lie that makes the
+            // meter look broken.
+            float applied = npc.Anger - before;
 
             if (amount >= TensionTrigger)
             {
                 npc.Tension = Mathx.Clamp01(npc.Tension + 0.14f);
             }
 
-            if (sim != null) sim.NoteAngerChange(npc, scaled, reason);
+            if (sim != null && applied > 0f) sim.NoteAngerChange(npc, applied, reason);
 
             return before < BoilingPoint && npc.Anger >= BoilingPoint;
         }
@@ -50,9 +56,14 @@ namespace AngryGuy.Core
 
             // Second and third failures hurt more than the first. NPCs having
             // "one of those days" is most of the comedy.
-            float escalation = 1f + Mathx.Clamp(npc.FrustrationCount - 1, 0, 4) * 0.28f;
+            float escalation = 1f + Mathx.Clamp(npc.FrustrationCount - 1, 0, 4) * 0.24f;
 
-            return 0.085f * temper * urgency * escalation;
+            // Retuned downward after portal routing was added. Before that fix
+            // NPCs regularly got wedged against a wall and never reached anything,
+            // so each failure that DID happen had to carry a lot of weight. Now
+            // they reach their targets and fail far more often, and the old
+            // values pinned the target at maximum inside a minute.
+            return 0.048f * temper * urgency * escalation;
         }
 
         /// <summary>Their property was taken, moved, broken or messed with.</summary>
@@ -60,7 +71,7 @@ namespace AngryGuy.Core
         {
             float territorial = Mathx.Lerp(0.4f, 1.9f, npc.Personality.Territoriality);
             float temper = Mathx.Lerp(0.6f, 1.5f, npc.Personality.Temper);
-            return 0.11f * severity * territorial * temper;
+            return 0.072f * severity * territorial * temper;
         }
 
         /// <summary>Mess in their space. Small on its own, corrosive in bulk.</summary>

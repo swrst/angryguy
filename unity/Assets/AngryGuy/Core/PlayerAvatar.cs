@@ -40,6 +40,9 @@ namespace AngryGuy.Core
         /// <summary>How far the player can throw a held object.</summary>
         public float ThrowRange = 7f;
 
+        /// <summary>What they are wearing, and so where they look like they belong.</summary>
+        public Outfit Outfit = Outfit.Civilian();
+
         /// <summary>Noise generated this moment by moving. Sneaking is near-silent.</summary>
         public float MovementNoise;
 
@@ -64,6 +67,12 @@ namespace AngryGuy.Core
                     if (carried.OwnerId.Length > 0) guilt += 0.2f;
                 }
             }
+
+            // A chef carrying a pan across a kitchen is not a suspicious sight.
+            // The right uniform in the right room makes almost everything you do
+            // look like work.
+            Zone zone = sim.ZoneAt(Position);
+            if (zone != null && Outfit.BelongsInZone(zone.Id)) guilt *= 0.45f;
             // Sneaking is quieter and harder to spot, but creeping about is
             // exactly what a guilty person looks like if you are seen anyway.
             if (Sneaking) guilt += 0.15f;

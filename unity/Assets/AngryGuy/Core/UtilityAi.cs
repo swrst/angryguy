@@ -140,7 +140,12 @@ namespace AngryGuy.Core
             float distanceFactor = Mathx.DistanceFalloff(distance, 4.5f);
             float ownership = OwnershipFactor(npc, obj);
 
-            float score = needScore * aff.BaseAppeal * distanceFactor * ownership;
+            // Habit weight is what gives a character a signature. Gordon tastes the
+            // pot constantly; Eva straightens chairs. Routines the player can learn
+            // are routines the player can exploit.
+            float habit = npc.HabitWeight(obj.Id, aff.Id);
+
+            float score = needScore * aff.BaseAppeal * distanceFactor * ownership * habit;
 
             return new ScoredOption
             {

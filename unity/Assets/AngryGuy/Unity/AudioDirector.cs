@@ -20,6 +20,7 @@ namespace AngryGuy.UnityLayer
 
         private AudioSource _ui;
         private AudioSource _tension;
+        private AudioSource _ambient;
 
         private Simulation _sim;
         private float _footstepTimer;
@@ -45,7 +46,11 @@ namespace AngryGuy.UnityLayer
             {
                 "footstep", "bell", "clink", "crunch", "splash", "slip", "grumble",
                 "shout", "huh", "door", "pickup", "success", "failure",
-                "sting_suspicion", "sting_payoff", "blip", "tension_loop"
+                "sting_suspicion", "sting_payoff", "blip", "tension_loop", "music_ambient",
+                "voice_gruff_short", "voice_gruff_mid", "voice_gruff_long",
+                "voice_bright_short", "voice_bright_mid", "voice_bright_long",
+                "voice_soft_short", "voice_soft_mid", "voice_soft_long",
+                "voice_crisp_short", "voice_crisp_mid", "voice_crisp_long"
             };
 
             for (int i = 0; i < names.Length; i++)
@@ -57,6 +62,17 @@ namespace AngryGuy.UnityLayer
             _ui = gameObject.AddComponent<AudioSource>();
             _ui.spatialBlend = 0f;
             _ui.playOnAwake = false;
+
+            _ambient = gameObject.AddComponent<AudioSource>();
+            _ambient.spatialBlend = 0f;
+            _ambient.playOnAwake = false;
+            _ambient.loop = true;
+            _ambient.volume = 0.22f;
+            if (_clips.ContainsKey("music_ambient"))
+            {
+                _ambient.clip = _clips["music_ambient"];
+                _ambient.Play();
+            }
 
             _tension = gameObject.AddComponent<AudioSource>();
             _tension.spatialBlend = 0f;
@@ -170,6 +186,36 @@ namespace AngryGuy.UnityLayer
             if (_tension == null) return;
             float target = Mathf.Clamp01(highestSuspicion) * 0.45f;
             _tension.volume = Mathf.MoveTowards(_tension.volume, target, dt * 0.35f);
+        }
+
+        /// <summary>
+        /// Give an NPC a voice. Four profiles keyed off the character, three
+        /// lengths keyed off how much they just said - enough that you can tell
+        /// who is shouting in the next room without looking.
+        /// </summary>
+        public void Speak(Npc npc, string line)
+        {
+            if (line.Length == 0) return;
+
+            string profile = VoiceProfileFor(npc);
+
+            string length = "short";
+            if (line.Length > 18) length = "mid";
+            if (line.Length > 34 || line.ToUpperInvariant() == line) length = "long";
+
+            float volume = length == "long" ? 0.85f : 0.55f;
+            At("voice_" + profile + "_" + length, LevelView.ToSim(LevelView.ToUnity(npc.Position)), volume);
+        }
+
+        private static string VoiceProfileFor(Npc npc)
+        {
+            switch (npc.Role)
+            {
+                case "head chef": return "gruff";
+                case "waiter": return "bright";
+                case "dishwasher": return "soft";
+                default: return "crisp";
+            }
         }
 
         // ------------------------------------------------------------------

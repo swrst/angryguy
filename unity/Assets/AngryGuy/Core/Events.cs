@@ -47,6 +47,12 @@ namespace AngryGuy.Core
         /// <summary>An NPC tidied something away, possibly destroying the player's setup.</summary>
         Cleanup,
 
+        /// <summary>Someone finds someone else's misfortune funny. Out loud.</summary>
+        Laughter,
+
+        /// <summary>An NPC has concluded that today's run of bad luck is deliberate.</summary>
+        Realisation,
+
         /// <summary>Bookkeeping only: objective satisfied / level over.</summary>
         Objective
     }

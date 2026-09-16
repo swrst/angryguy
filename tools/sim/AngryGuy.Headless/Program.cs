@@ -221,6 +221,14 @@ namespace AngryGuy.Headless
                 string cmd = parts[0].ToLowerInvariant();
                 string arg = parts.Length > 1 ? string.Join(" ", parts, 1, parts.Length - 1) : "";
 
+                // Typing "1" is what everyone tries first. Accept it.
+                int bareNumber;
+                if (int.TryParse(cmd, out bareNumber))
+                {
+                    arg = cmd;
+                    cmd = "use";
+                }
+
                 switch (cmd)
                 {
                     case "help": PrintHelp(); break;
@@ -319,8 +327,10 @@ namespace AngryGuy.Headless
                 }
             }
 
+            // '+' not 'E': NPCs are drawn by their initial, and Eva was rendering
+            // as a second back door.
             Zone exit = _sim.World.GetZone(_sim.ExitZoneId);
-            if (exit != null) Plot(grid, exit.Center, 'E', width, height);
+            if (exit != null) Plot(grid, exit.Center, '+', width, height);
 
             for (int i = 0; i < _sim.World.Objects.Count; i++)
             {
@@ -345,7 +355,7 @@ namespace AngryGuy.Headless
                 Console.WriteLine("  |" + new string(row) + "|");
             }
             Console.WriteLine("  +" + new string('-', width) + "+");
-            Console.WriteLine("   @ you   E back door   # wall   UPPER = people   lower = objects");
+            Console.WriteLine("   @ you   + back door   # wall   UPPER = people   lower = objects");
         }
 
         private static void Plot(char[,] grid, Vec3 p, char c, int width, int height)

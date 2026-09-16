@@ -28,8 +28,13 @@ namespace AngryGuy.Core
 
         public bool CanSee(Vec3 eye, Vec3 facing, Vec3 target, World world)
         {
+            // Gloom shortens everyone's reach at once. Sharp-eyed NPCs cope with
+            // it better, which keeps the manager dangerous even in the dark.
+            float light = world != null ? world.LightLevel : 1f;
+            float effectiveRange = SightRange * Mathx.Lerp(light, 1f, NoticeChance * 0.35f);
+
             float distance = Vec3.FlatDistance(eye, target);
-            if (distance > SightRange) return false;
+            if (distance > effectiveRange) return false;
 
             // Anything basically on top of them is seen regardless of facing.
             if (distance > 0.8f)

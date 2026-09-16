@@ -70,7 +70,7 @@ namespace AngryGuy.Core
                 if (kv.Value >= 0f) continue;
                 float dislike = -kv.Value;
                 Bump(scores, reasons, kv.Key,
-                    dislike * 0.28f * Mathx.Lerp(0.4f, 1.6f, detective.Personality.Paranoia),
+                    dislike * 0.28f * Mathx.Lerp(0.4f, 1.6f, detective.EffectiveParanoia),
                     "never liked them anyway");
             }
 
@@ -91,7 +91,7 @@ namespace AngryGuy.Core
             }
 
             // Paranoid NPCs need almost no evidence. Trusting ones assume accidents.
-            float threshold = Mathx.Lerp(0.52f, 0.14f, detective.Personality.Paranoia);
+            float threshold = Mathx.Lerp(0.52f, 0.14f, detective.EffectiveParanoia);
             if (personal) threshold *= 0.8f;
 
             if (bestId.Length == 0 || bestScore < threshold)

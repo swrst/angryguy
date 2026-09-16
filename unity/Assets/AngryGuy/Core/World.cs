@@ -25,6 +25,13 @@ namespace AngryGuy.Core
         public Vec3 Center;
         public float Radius = 3f;
 
+        /// <summary>
+        /// Somewhere the public has no business being. Standing here in the wrong
+        /// clothes is quietly incriminating all by itself, which is what makes a
+        /// stolen uniform worth having.
+        /// </summary>
+        public bool StaffOnly;
+
         public bool Contains(Vec3 p)
         {
             return Vec3.FlatDistance(p, Center) <= Radius;
@@ -54,10 +61,25 @@ namespace AngryGuy.Core
         public readonly List<Wall> Walls = new List<Wall>();
         public readonly List<Zone> Zones = new List<Zone>();
 
+        /// <summary>
+        /// Doorways and gaps worth steering through. Movement is straight-line
+        /// with wall sliding, which has no way around a corner: an NPC whose
+        /// target sits behind a wall slides until it stops making progress and
+        /// then stands there for the rest of the level. Routing via a portal
+        /// first is the cheapest thing that makes the geometry navigable.
+        /// </summary>
+        public readonly List<Vec3> Portals = new List<Vec3>();
+
         private readonly Dictionary<string, SmartObject> _objectsById =
             new Dictionary<string, SmartObject>();
 
         private readonly Dictionary<string, Npc> _npcsById = new Dictionary<string, Npc>();
+
+        /// <summary>
+        /// 1 = lit, lower = gloom. Scales how far anyone can see, so killing the
+        /// lights changes the whole level at once instead of one object.
+        /// </summary>
+        public float LightLevel = 1f;
 
         public Vec3 FloorMin = new Vec3(-10f, 0f, -10f);
         public Vec3 FloorMax = new Vec3(10f, 0f, 10f);
@@ -135,6 +157,36 @@ namespace AngryGuy.Core
                 if (SegmentsIntersect(from, to, door.Segment.A, door.Segment.B)) return door.Object;
             }
             return null;
+        }
+
+        /// <summary>
+        /// A doorway to aim for when the direct line is blocked: reachable from
+        /// here, and genuinely closer to the goal than standing still.
+        /// </summary>
+        public bool TryFindPortal(Vec3 from, Vec3 goal, out Vec3 portal)
+        {
+            portal = Vec3.Zero;
+
+            float best = float.MaxValue;
+            bool found = false;
+
+            for (int i = 0; i < Portals.Count; i++)
+            {
+                Vec3 candidate = Portals[i];
+
+                // No good steering toward a doorway we also cannot see.
+                if (!HasLineOfSight(from, candidate)) continue;
+
+                float cost = Vec3.FlatDistance(from, candidate) + Vec3.FlatDistance(candidate, goal);
+                if (cost < best)
+                {
+                    best = cost;
+                    portal = candidate;
+                    found = true;
+                }
+            }
+
+            return found;
         }
 
         public Vec3 Clamp(Vec3 p)

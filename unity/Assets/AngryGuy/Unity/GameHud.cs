@@ -82,6 +82,12 @@ namespace AngryGuy.UnityLayer
 
             Simulation sim = _runner.Sim;
 
+            if (_runner.InMenu)
+            {
+                DrawMenu();
+                return;
+            }
+
             DrawObjectivePanel(sim);
             DrawWatchers(sim);
             DrawWorldLabels(sim);
@@ -95,12 +101,73 @@ namespace AngryGuy.UnityLayer
 
         // ------------------------------------------------------------------
 
+        /// <summary>
+        /// Start screen. The level is already built and frozen behind it, so
+        /// Play is instantaneous and the menu doubles as a look at the room.
+        /// </summary>
+        private void DrawMenu()
+        {
+            GUI.color = new Color(0f, 0f, 0f, 0.72f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            float width = 480f;
+            float height = 372f;
+            Rect panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f,
+                width, height);
+            Panel(panel);
+
+            GUI.color = new Color(1f, 0.85f, 0.45f);
+            GUI.Label(new Rect(panel.x, panel.y + 22f, width, 44f), "ANGRY GUY", _huge);
+            GUI.color = Color.white;
+            GUI.Label(new Rect(panel.x, panel.y + 66f, width, 22f),
+                "Make one man furious. Don't let anyone work out it was you.", Centred(_small));
+
+            float y = panel.y + 108f;
+
+            if (GUI.Button(new Rect(panel.x + 120f, y, 240f, 40f), "PLAY  -  The Restaurant"))
+            {
+                _runner.BeginPlay();
+            }
+
+            y += 50f;
+            GUI.Label(new Rect(panel.x, y, width, 20f), "seed " + _runner.Seed, Centred(_small));
+
+            y += 24f;
+            if (GUI.Button(new Rect(panel.x + 120f, y, 115f, 28f), "New seed"))
+            {
+                _runner.StartLevel(Random.Range(1, int.MaxValue));
+            }
+
+            if (GUI.Button(new Rect(panel.x + 245f, y, 115f, 28f), "Quit"))
+            {
+                Application.Quit();
+            }
+
+            y += 46f;
+            string[] help =
+            {
+                "WASD move     SHIFT sneak     E interact     1-9 pick option",
+                "T throw held item     F hide     Q cancel     V camera",
+                "TAB debug overlay     H toggle controls",
+                "",
+                "Orange options are sabotage. Most of it pays off on a delay -",
+                "set it up, then make sure you're somewhere else when it lands."
+            };
+
+            for (int i = 0; i < help.Length; i++)
+            {
+                GUI.Label(new Rect(panel.x + 20f, y + i * 17f, width - 40f, 16f),
+                    help[i], Centred(_tiny));
+            }
+        }
+
         private void DrawObjectivePanel(Simulation sim)
         {
             Npc target = sim.Target;
             if (target == null) return;
 
-            Rect panel = new Rect(14f, 14f, 330f, 150f);
+            Rect panel = new Rect(14f, 14f, 330f, 166f);
             Panel(panel);
 
             GUI.Label(new Rect(panel.x + 12f, panel.y + 8f, 310f, 24f),
@@ -121,7 +188,7 @@ namespace AngryGuy.UnityLayer
 
             GUI.Label(new Rect(panel.x + 12f, panel.y + 78f, 310f, 18f),
                 who.Length > 0
-                    ? "Suspicion  " + Simulation.ToDisplay(highest) + "  (" + who + ": " + Suspicion.Describe(tier) + ")"
+                    ? "Suspicion  " + Simulation.ToDisplay(highest) + "  (" + who + ": " + Suspicion.Label(tier) + ")"
                     : "Suspicion  0  (nobody has noticed you)",
                 _small);
 
@@ -134,8 +201,29 @@ namespace AngryGuy.UnityLayer
                 : Mathf.RoundToInt(Mathf.Max(0f, sim.TimeLimit - sim.Time)) + "s left";
 
             GUI.color = sim.ObjectiveMet ? new Color(0.45f, 1f, 0.6f) : Color.white;
-            GUI.Label(new Rect(panel.x + 12f, panel.y + 120f, 310f, 20f), status, _small);
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 120f, 200f, 20f), status, _small);
+
+            // What you are wearing decides where you can stand without it
+            // slowly costing you, so it belongs on screen.
+            GUI.color = sim.Player.Outfit.Id == "civilian"
+                ? new Color(0.8f, 0.8f, 0.85f)
+                : new Color(0.55f, 0.9f, 1f);
+            GUI.Label(new Rect(panel.x + 150f, panel.y + 120f, 170f, 20f),
+                sim.Player.Outfit.Name, _small);
             GUI.color = Color.white;
+
+            // The whole building getting jumpy is the difficulty curve. Only show
+            // it once it actually matters.
+            if (sim.Unease > 0.15f)
+            {
+                GUI.color = Color.Lerp(new Color(0.8f, 0.8f, 0.5f), new Color(1f, 0.4f, 0.3f), sim.Unease);
+                GUI.Label(new Rect(panel.x + 12f, panel.y + 140f, 310f, 20f),
+                    sim.Unease > 0.6f
+                        ? "The staff know something is going on"
+                        : "People are starting to get twitchy",
+                    _small);
+                GUI.color = Color.white;
+            }
         }
 
         private string MostSuspicious(Simulation sim)

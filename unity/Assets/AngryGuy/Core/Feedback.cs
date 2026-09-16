@@ -79,11 +79,25 @@ namespace AngryGuy.Core
             return SuspicionTier.Calm;
         }
 
+        /// <summary>Reads after a name: "Marie is ...".</summary>
         public static string Describe(SuspicionTier tier)
         {
             switch (tier)
             {
                 case SuspicionTier.Certain: return "sure it was you";
+                case SuspicionTier.Watching: return "watching you closely";
+                case SuspicionTier.Suspicious: return "getting suspicious";
+                case SuspicionTier.Unsettled: return "starting to wonder";
+                default: return "not paying you any attention";
+            }
+        }
+
+        /// <summary>Reads as a standalone label in the HUD.</summary>
+        public static string Label(SuspicionTier tier)
+        {
+            switch (tier)
+            {
+                case SuspicionTier.Certain: return "certain it was you";
                 case SuspicionTier.Watching: return "watching you";
                 case SuspicionTier.Suspicious: return "suspicious";
                 case SuspicionTier.Unsettled: return "something feels off";

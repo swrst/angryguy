@@ -111,6 +111,19 @@ namespace AngryGuy.UnityLayer
         {
             if (_runner == null || _runner.Sim == null) return;
 
+            if (_runner.InMenu)
+            {
+                // Hands off while the menu is up, and give the mouse back.
+                if (Cursor.lockState == CursorLockMode.Locked) LockCursor(false);
+                _moving = false;
+                return;
+            }
+
+            if (Cursor.lockState != CursorLockMode.Locked && Input.GetMouseButtonDown(0))
+            {
+                LockCursor(true);
+            }
+
             HandleCursor();
             HandleLook();
             HandleMovement();

@@ -56,6 +56,27 @@ namespace AngryGuy.Core
 
         private readonly List<PlayerAction> _playerActions = new List<PlayerAction>();
 
+        /// <summary>
+        /// How unsettled the whole building is. Rises with every unexplained
+        /// thing that gets discovered and makes everyone warier.
+        ///
+        /// This is the difficulty curve, told from inside the fiction: a player
+        /// who breaks everything at once ends up working in a room full of people
+        /// who are actively looking for a culprit.
+        /// </summary>
+        public float Unease;
+
+        /// <summary>While this is in the future, everyone abandons work and files out.</summary>
+        public float AlarmUntil = -1f;
+
+        public bool AlarmRinging
+        {
+            get { return Time < AlarmUntil; }
+        }
+
+        /// <summary>Assembly point during an evacuation. Defaults to the exit.</summary>
+        public string AssemblyZoneId = "";
+
         public IReadOnlyList<PlayerAction> PlayerActions
         {
             get { return _playerActions; }
@@ -99,6 +120,10 @@ namespace AngryGuy.Core
             }
 
             TickSocialProximity(dt);
+
+            // The building calms down if nothing else happens.
+            Unease = Mathx.Clamp01(Unease - 0.006f * dt);
+
             CheckObjective();
 
             if (Time >= TimeLimit && Outcome == GameOutcome.InProgress)
@@ -148,7 +173,10 @@ namespace AngryGuy.Core
         {
             npc.Needs.Tick(dt);
             npc.Memory.Tick(dt, npc.Personality.Grudge, Time);
+            npc.Mind.Tick(dt, npc.Personality);
             AngerModel.Decay(npc, dt);
+
+            TickRealisation(npc);
 
             float starvation = AngerModel.Starvation(npc, dt);
             if (starvation > 0f) AngerModel.Add(npc, starvation, this, "unmet needs");
@@ -161,9 +189,15 @@ namespace AngryGuy.Core
             if (npc.SpeechTimer <= 0f) npc.Speech = "";
 
             PerceptionSample(npc, dt);
+            TickBelonging(npc, dt);
             CheckHazards(npc);
 
-            if (npc.Anger >= AngerModel.BoilingPoint && npc.OutburstCooldown <= 0f)
+            // Explode when things get WORSE, not merely while they are still bad.
+            // Without the rising check a pegged-out NPC shouts every 26 seconds
+            // forever, which stops meaning anything.
+            if (npc.Anger >= AngerModel.BoilingPoint
+                && npc.OutburstCooldown <= 0f
+                && npc.Anger > npc.AngerAtLastOutburst + 0.02f)
             {
                 Outburst(npc);
             }
@@ -198,10 +232,156 @@ namespace AngryGuy.Core
             }
         }
 
+        /// <summary>
+        /// The moment an NPC stops believing in coincidence. It happens once, it
+        /// is said out loud, and from then on they are a much harder audience.
+        /// </summary>
+        private void TickRealisation(Npc npc)
+        {
+            if (!npc.Mind.SuspectsSabotage || npc.Mind.VoicedSuspicionOfSabotage) return;
+
+            npc.Mind.VoicedSuspicionOfSabotage = true;
+            npc.Say(Lines.RealisesSabotage(npc), 5f);
+
+            Announce(FeedbackKind.Alert,
+                npc.Name + " has decided this isn't bad luck - they're looking for someone now",
+                npc.Id);
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.Realisation,
+                Position = npc.Position,
+                TrueActorId = npc.Id,
+                Loudness = 0.55f,
+                Severity = 0.3f,
+                Description = npc.Name + " thinks someone is doing this deliberately"
+            });
+
+            Unease = Mathx.Clamp01(Unease + 0.2f);
+        }
+
+        /// <summary>
+        /// Something has gone wrong for one person, in front of whoever happened
+        /// to be looking. This is where most of the character comes from: the
+        /// same mishap humiliates the victim, delights people who dislike them,
+        /// and frightens the timid.
+        /// </summary>
+        private void ReactToMisfortune(Npc victim, float severity, Vec3 where, string what)
+        {
+            victim.Mind.Misfortune(severity, victim.Personality);
+
+            List<Npc> witnesses = new List<Npc>();
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                Npc other = World.Npcs[i];
+                if (other == victim) continue;
+                if (other.Perception.CanSee(other.Position, other.Facing, where, World)) witnesses.Add(other);
+            }
+
+            if (witnesses.Count == 0)
+            {
+                victim.Say(Lines.Misfortune(victim, what));
+                return;
+            }
+
+            // Failing in private is annoying. Failing in front of the staff is
+            // humiliating, and humiliation is worth far more anger.
+            float audience = Mathx.Clamp(witnesses.Count / 2f, 0.5f, 1.6f);
+            float humiliation = 0.09f * severity * audience
+                                * Mathx.Lerp(0.5f, 1.8f, victim.Personality.Temper);
+
+            victim.Mind.Embarrassment = Mathx.Clamp01(victim.Mind.Embarrassment + 0.3f * audience);
+            AngerModel.Add(victim, humiliation, this, "and everyone saw it");
+            victim.Say(Lines.Embarrassed(victim, witnesses.Count));
+
+            for (int i = 0; i < witnesses.Count; i++)
+            {
+                Npc witness = witnesses[i];
+                float relationship = witness.RelationshipWith(victim.Id);
+
+                bool findsItFunny = severity > 0.4f &&
+                                    (relationship < -0.1f || witness.Personality.Sociability > 0.65f);
+
+                if (findsItFunny)
+                {
+                    Laugh(witness, victim);
+                }
+                else if (severity > 0.5f && witness.Personality.Temper < 0.55f)
+                {
+                    // The timid find other people's accidents unsettling.
+                    witness.Mind.Fear = Mathx.Clamp01(witness.Mind.Fear + 0.22f);
+                    witness.Say(Lines.Afraid(witness), 2.5f);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Being laughed at is its own injury, and it damages the relationship
+        /// with whoever laughed - which is who they will blame next time.
+        /// </summary>
+        private void Laugh(Npc laugher, Npc victim)
+        {
+            laugher.Mind.Amusement = Mathx.Clamp01(laugher.Mind.Amusement + 0.45f);
+            laugher.Mind.Boredom = 0f;
+            laugher.Say(Lines.Amused(laugher, victim.Name), 3f);
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.Laughter,
+                Position = laugher.Position,
+                TrueActorId = laugher.Id,
+                VictimId = victim.Id,
+                Loudness = 0.5f,
+                Severity = 0.25f,
+                Description = laugher.Name + " laughs at " + victim.Name
+            });
+
+            if (victim.Perception.CanHear(victim.Position, laugher.Position, 0.5f, World))
+            {
+                AngerModel.Add(victim, 0.05f * Mathx.Lerp(0.5f, 1.9f, victim.Personality.Temper),
+                    this, "being laughed at by " + laugher.Name);
+                victim.AddRelationship(laugher.Id, -0.2f);
+            }
+        }
+
+        /// <summary>
+        /// Sets everyone evacuating for a while. Enormously effective and
+        /// enormously incriminating - the classic "worth it?" tool.
+        /// </summary>
+        public void TriggerAlarm(float seconds)
+        {
+            AlarmUntil = Time + seconds;
+            Announce(FeedbackKind.Alert, "FIRE ALARM - everyone is heading outside");
+
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                Npc npc = World.Npcs[i];
+                npc.AbandonPlan();
+                npc.Mind.Fear = Mathx.Clamp01(npc.Mind.Fear + 0.3f);
+                npc.Say("Is that the alarm? Out, everyone out.", 4f);
+            }
+        }
+
         private void Decide(Npc npc)
         {
             if (npc.DecisionCooldown > 0f) return;
             npc.DecisionCooldown = 0.4f;
+
+            // An alarm overrides everything. Nobody stops to finish the washing up.
+            if (AlarmRinging)
+            {
+                Zone assembly = World.GetZone(AssemblyZoneId.Length > 0 ? AssemblyZoneId : ExitZoneId);
+                if (assembly != null)
+                {
+                    npc.CurrentPlan = null;
+                    npc.MoveTarget = assembly.Center;
+                    npc.Activity = NpcActivity.Walking;
+                    npc.DecisionCooldown = 2f;
+                    npc.ClosestApproach = float.MaxValue;
+                    npc.StuckTimer = 0f;
+                    return;
+                }
+            }
 
             ScoredOption option = UtilityAi.Choose(npc, World, Rng, Time);
             if (option == null)
@@ -218,6 +398,8 @@ namespace AngryGuy.Core
             };
             npc.MoveTarget = option.Object.Position;
             npc.Activity = NpcActivity.Walking;
+            npc.ClosestApproach = float.MaxValue;
+            npc.StuckTimer = 0f;
         }
 
         /// <summary>
@@ -239,7 +421,26 @@ namespace AngryGuy.Core
                 npc.MoveTarget = home.Center;
                 npc.Activity = NpcActivity.Walking;
                 npc.DecisionCooldown = 2f;
+                npc.ClosestApproach = float.MaxValue;
+                npc.StuckTimer = 0f;
                 return;
+            }
+
+            // Nobody likes being bored, and nobody likes being alone in a room
+            // where things keep going wrong. Both send them looking for company,
+            // which quietly reshapes where everyone is standing.
+            if (npc.Mind.Boredom > 0.7f || npc.Mind.Fear > 0.55f)
+            {
+                Npc company = NearestOtherNpc(npc);
+                if (company != null && Vec3.FlatDistance(company.Position, npc.Position) > 2.5f)
+                {
+                    npc.MoveTarget = company.Position;
+                    npc.Activity = NpcActivity.Walking;
+                    npc.DecisionCooldown = 3f;
+                    npc.Mind.Boredom = Mathx.Clamp01(npc.Mind.Boredom - 0.25f);
+                    if (Rng.Chance(0.3f)) npc.Say(Lines.Bored(npc), 2.5f);
+                    return;
+                }
             }
 
             // Mostly just stand about and look around.
@@ -266,6 +467,27 @@ namespace AngryGuy.Core
             npc.DecisionCooldown = 2.5f;
         }
 
+        private Npc NearestOtherNpc(Npc npc)
+        {
+            Npc best = null;
+            float bestDistance = float.MaxValue;
+
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                Npc other = World.Npcs[i];
+                if (other == npc) continue;
+
+                float distance = Vec3.FlatDistance(other.Position, npc.Position);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = other;
+                }
+            }
+
+            return best;
+        }
+
         private void TickWalking(Npc npc, float dt)
         {
             // Without this, a shut door turns into a permanent roadblock and the
@@ -286,9 +508,37 @@ namespace AngryGuy.Core
                 });
             }
 
-            MoveActor(ref npc.Position, ref npc.Facing, npc.MoveTarget, npc.MoveSpeed * dt);
+            // Steer via a doorway when the target is behind a wall, otherwise the
+            // slide-along-walls fallback dead-ends in a corner and never recovers.
+            Vec3 goal = npc.MoveTarget;
+            if (!World.HasLineOfSight(npc.Position, goal))
+            {
+                Vec3 portal;
+                if (World.TryFindPortal(npc.Position, goal, out portal)) goal = portal;
+            }
 
-            if (Vec3.FlatDistance(npc.Position, npc.MoveTarget) > 1.1f) return;
+            MoveActor(ref npc.Position, ref npc.Facing, goal, npc.MoveSpeed * dt);
+
+            float remaining = Vec3.FlatDistance(npc.Position, npc.MoveTarget);
+
+            // Safety net for any geometry the portals do not cover: if they have
+            // stopped getting closer, give up rather than freezing for the level.
+            if (remaining < npc.ClosestApproach - 0.15f)
+            {
+                npc.ClosestApproach = remaining;
+                npc.StuckTimer = 0f;
+            }
+            else
+            {
+                npc.StuckTimer += dt;
+                if (npc.StuckTimer > 6f)
+                {
+                    GiveUpOnPlan(npc);
+                    return;
+                }
+            }
+
+            if (remaining > 1.1f) return;
 
             if (npc.CurrentPlan == null)
             {
@@ -309,6 +559,24 @@ namespace AngryGuy.Core
             plan.InProgress = true;
             plan.Elapsed = 0f;
             npc.Activity = NpcActivity.Using;
+        }
+
+        /// <summary>
+        /// Couldn't get there at all. Not a sabotage failure - no anger, no
+        /// grievance, just a quiet change of mind, because the alternative is an
+        /// NPC standing against a wall forever.
+        /// </summary>
+        private void GiveUpOnPlan(Npc npc)
+        {
+            if (npc.CurrentPlan != null)
+            {
+                npc.AvoidUntil[npc.CurrentPlan.Target.Id] = Time + 12f;
+            }
+
+            npc.AbandonPlan();
+            npc.StuckTimer = 0f;
+            npc.ClosestApproach = float.MaxValue;
+            npc.DecisionCooldown = 1f;
         }
 
         private void TickUsing(Npc npc, float dt)
@@ -358,6 +626,9 @@ namespace AngryGuy.Core
             // A satisfied NPC calms down slightly. Success is the counterweight
             // the player is working against.
             npc.Anger = Mathx.Clamp01(npc.Anger - 0.012f);
+            npc.Mind.Satisfaction(npc.Personality);
+
+            if (npc.Mind.Pride > 0.5f && Rng.Chance(0.25f)) npc.Say(Lines.Proud(npc), 2.5f);
 
             npc.CurrentPlan = null;
             npc.Activity = NpcActivity.Idle;
@@ -369,8 +640,8 @@ namespace AngryGuy.Core
             float amount = AngerModel.PlanFailure(npc, plan.Motive);
             AngerModel.Add(npc, amount, this, "couldn't " + plan.Describe());
 
-            npc.AvoidUntil[plan.Target.Id] = Time + 22f;
-            npc.Say(FrustrationLine(npc, plan.Target));
+            npc.AvoidUntil[plan.Target.Id] = Time + 32f;
+            ReactToMisfortune(npc, 0.45f, plan.Target.Position, plan.Target.Name);
 
             Publish(new WorldEvent
             {
@@ -391,13 +662,6 @@ namespace AngryGuy.Core
 
             npc.AbandonPlan();
             npc.DecisionCooldown = 1.2f;
-        }
-
-        private static string FrustrationLine(Npc npc, SmartObject obj)
-        {
-            if (npc.Anger > 0.7f) return "WHO TOUCHED MY " + obj.Name.ToUpperInvariant() + "?!";
-            if (npc.Anger > 0.4f) return "Oh, come ON. The " + obj.Name + " as well?";
-            return "Hm? The " + obj.Name + " isn't right...";
         }
 
         private void TickInvestigating(Npc npc, float dt)
@@ -464,6 +728,12 @@ namespace AngryGuy.Core
 
             AngerModel.Add(accused, AngerModel.Accused(accused, confidence), this,
                 "accused by " + accuser.Name);
+
+            // Being repeatedly fingered for things wears on a person, and the
+            // scapegoat eventually starts fighting back.
+            accused.Mind.FeelsBlamed = Mathx.Clamp01(accused.Mind.FeelsBlamed + 0.35f);
+            accused.Mind.DayQuality = Mathx.Clamp01(accused.Mind.DayQuality - 0.12f);
+            if (accused.Mind.FeelsBlamed > 0.6f) accused.Say(Lines.FeelsBlamed(accused), 4f);
             AngerModel.Add(accuser, 0.03f, this, "arguing with " + accused.Name);
 
             accused.AddRelationship(accuser.Id, -0.35f);
@@ -510,6 +780,7 @@ namespace AngryGuy.Core
         private void Outburst(Npc npc)
         {
             npc.OutburstCooldown = 26f;
+            npc.AngerAtLastOutburst = npc.Anger;
             npc.Say("THAT'S IT! I'VE HAD ENOUGH OF THIS PLACE!", 5f);
 
             Publish(new WorldEvent
@@ -558,8 +829,11 @@ namespace AngryGuy.Core
             }
 
             // Spotting that an object is wrong. Only a chance per sample, so
-            // observant NPCs are meaningfully more dangerous.
+            // observant NPCs are meaningfully more dangerous - and a wary NPC in
+            // an unsettled building is much more dangerous again.
             if (!Rng.Chance(dt * 0.6f)) return;
+
+            float alertness = npc.Mind.Alertness * (1f + Unease * 0.6f);
 
             List<SmartObject> near = World.ObjectsNear(npc.Position, npc.Perception.SightRange);
             for (int i = 0; i < near.Count; i++)
@@ -567,7 +841,7 @@ namespace AngryGuy.Core
                 SmartObject obj = near[i];
                 if (!npc.Perception.CanSee(npc.Position, npc.Facing, obj.Position, World)) continue;
                 if (!LooksWrong(obj)) continue;
-                if (!Rng.Chance(npc.Perception.NoticeChance)) continue;
+                if (!Rng.Chance(Mathx.Clamp01(npc.Perception.NoticeChance * alertness))) continue;
 
                 InvestigateObject(npc, obj);
                 break;
@@ -622,9 +896,12 @@ namespace AngryGuy.Core
 
                 AngerModel.Add(npc, AngerModel.PropertyViolation(npc, 0.7f), this,
                     "went flying over " + obj.Name);
-                npc.Say("WHOA— who left that there?!");
                 npc.AbandonPlan();
                 npc.DecisionCooldown = 2.5f;
+
+                // Going over in front of the whole kitchen is the single funniest
+                // thing in the game, and by far the most humiliating.
+                ReactToMisfortune(npc, 0.85f, npc.Position, obj.Name);
 
                 Publish(new WorldEvent
                 {
@@ -697,10 +974,15 @@ namespace AngryGuy.Core
             SmartObject obj = World.GetObject(cause.ObjectId);
             bool mine = obj != null && obj.OwnerId == npc.Id;
 
+            // Every unexplained thing that comes to light makes the building
+            // warier as a whole, not just the person who found it.
+            Unease = Mathx.Clamp01(Unease + 0.05f * cause.Severity);
+
             if (mine || cause.VictimId == npc.Id)
             {
                 AngerModel.Add(npc, AngerModel.PropertyViolation(npc, cause.Severity), this,
                     "someone messed with " + (obj != null ? obj.Name : "their things"));
+                npc.Mind.Misfortune(cause.Severity, npc.Personality);
             }
             else
             {
@@ -830,10 +1112,34 @@ namespace AngryGuy.Core
 
                 case EventKind.Noise:
                 case EventKind.Slipped:
+                    // A loud thing with nobody obviously behind it is unnerving,
+                    // and the more of them there have been, the worse it gets.
+                    if (e.TrueActorId.Length == 0 && e.Loudness > 0.5f)
+                    {
+                        npc.Mind.Fear = Mathx.Clamp01(
+                            npc.Mind.Fear + 0.10f * (1f + Unease) *
+                            Mathx.Lerp(1.4f, 0.5f, npc.Personality.Temper));
+                    }
+
                     if (npc.Activity == NpcActivity.Idle &&
-                        Rng.Chance(0.25f + npc.Personality.Observance * 0.45f))
+                        Rng.Chance((0.25f + npc.Personality.Observance * 0.45f) * npc.Mind.Alertness))
                     {
                         StartInvestigation(npc, e.Position, "what was that");
+                    }
+                    break;
+
+                case EventKind.Realisation:
+                    // Suspicion is contagious. One person saying it out loud puts
+                    // the idea in everyone else's head.
+                    npc.Mind.Wariness = Mathx.Clamp01(
+                        npc.Mind.Wariness + 0.18f * npc.Personality.Gullibility);
+                    break;
+
+                case EventKind.Laughter:
+                    // Laughter spreads, but only among people already enjoying themselves.
+                    if (npc.Mind.Amusement > 0.2f)
+                    {
+                        npc.Mind.Amusement = Mathx.Clamp01(npc.Mind.Amusement + 0.15f);
                     }
                     break;
 
@@ -1168,6 +1474,60 @@ namespace AngryGuy.Core
             return true;
         }
 
+        /// <summary>The zone a point sits in, innermost first.</summary>
+        public Zone ZoneAt(Vec3 position)
+        {
+            Zone best = null;
+            float bestRadius = float.MaxValue;
+
+            for (int i = 0; i < World.Zones.Count; i++)
+            {
+                Zone zone = World.Zones[i];
+                if (!zone.Contains(position)) continue;
+                if (zone.Radius < bestRadius)
+                {
+                    bestRadius = zone.Radius;
+                    best = zone;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// Being somewhere you have no business being, in front of someone who
+        /// works there. Slow, constant pressure rather than a single spike - the
+        /// player can cross the kitchen, they just cannot loiter in it.
+        /// </summary>
+        private void TickBelonging(Npc npc, float dt)
+        {
+            if (Player.IsHidden) return;
+            if (!CanSeePlayer(npc)) return;
+
+            Zone zone = ZoneAt(Player.Position);
+            if (zone == null || !zone.StaffOnly) return;
+
+            if (Player.Outfit.BelongsInZone(zone.Id))
+            {
+                // The uniform works. But it hides your role, not your face, and
+                // someone who knows every member of staff will get there in the end.
+                if (npc.Personality.Observance < 0.8f) return;
+
+                float doubt = 0.004f * dt * (1f - Player.Outfit.Quality) * npc.Mind.Alertness;
+                if (doubt <= 0f) return;
+
+                RaiseSuspicion(npc, Player.Id, doubt, "doesn't recognise you", true);
+                if (Rng.Chance(dt * 0.05f)) npc.Say("Hang on - do you work here?", 3f);
+                return;
+            }
+
+            float rate = 0.045f * dt * npc.Mind.Alertness
+                         * Mathx.Lerp(0.6f, 1.5f, npc.Personality.Paranoia);
+
+            RaiseSuspicion(npc, Player.Id, rate,
+                "you shouldn't be in the " + zone.Name.ToLowerInvariant(), true);
+        }
+
         public Vec3 ActorPosition(string actorId)
         {
             if (actorId == Player.Id) return Player.Position;
@@ -1207,14 +1567,22 @@ namespace AngryGuy.Core
         /// and reported. Direct calls to Npc.AddSuspicion bypass the player's
         /// only warning that they are being noticed.
         /// </summary>
-        public void RaiseSuspicion(Npc npc, string actorId, float amount, string reason)
+        /// <summary>
+        /// The one place suspicion is raised, so every increase is both clamped
+        /// and reported.
+        ///
+        /// Set <paramref name="continuous"/> for per-tick pressure such as
+        /// loitering somewhere you do not belong. The de-duplication below exists
+        /// to stop a single discrete action stacking three separate penalties;
+        /// applied to a trickle it quarters every tick and decay eats the rest,
+        /// so a continuous source would silently do nothing at all.
+        /// </summary>
+        public void RaiseSuspicion(Npc npc, string actorId, float amount, string reason,
+            bool continuous = false)
         {
             if (amount <= 0f || actorId.Length == 0) return;
 
-            // Collapse the several ways one visible action reaches this method
-            // into a single penalty, so being spotted once costs one mistake's
-            // worth of suspicion rather than three.
-            if (actorId == Player.Id)
+            if (actorId == Player.Id && !continuous)
             {
                 if (Time - npc.LastPlayerSuspicionTime < 1.5f) amount *= 0.25f;
                 npc.LastPlayerSuspicionTime = Time;

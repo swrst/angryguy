@@ -186,6 +186,63 @@ flagged.
 
 ---
 
+## The mind: what makes four NPCs feel like four people
+
+Anger alone makes a target, not a character. `Mind` carries the rest:
+
+**Secondary emotions** — fear, amusement, embarrassment, pride, boredom. Each
+decays, each changes behaviour. Bored and frightened NPCs go looking for company,
+which quietly reshapes where everyone is standing. A proud NPC is harder to wind
+up. A frightened one misses less.
+
+**A self-model** — how they think the day is going, whether they feel blamed,
+how many things have gone wrong for them, and **Wariness**: their own growing
+conviction that today's bad luck is not luck. Cross the threshold and they say it
+out loud, once, and from then on their effective paranoia is raised.
+
+**Level-wide `Unease`** rises with every unexplained thing that gets discovered
+and sharpens everybody's eyes. Together with Wariness this is the difficulty
+curve told from inside the fiction: break everything at once and you end up
+working in a room full of people who are actively looking for a culprit.
+
+The most productive single idea here is **audience**. `ReactToMisfortune` counts
+who could see it, and:
+
+- the victim's humiliation (and anger) scales with how many people watched;
+- anyone who dislikes them **laughs**, which is its own injury, damages the
+  relationship, and makes the victim more likely to blame the laugher next time;
+- the timid are frightened rather than amused.
+
+So the same oil slick produces a completely different scene depending on who is
+standing where — and the player's real skill is arranging the audience.
+
+**Habits** give each character a signature: per-NPC weights on (object,
+affordance) pairs, multiplied into the utility score. Gordon is always back at
+that stove. Routines the player can learn are routines the player can exploit.
+
+---
+
+## Disguises and belonging
+
+Zones can be `StaffOnly`. Standing in one in the wrong clothes is quietly
+incriminating on its own — a slow per-tick trickle while anyone can see you —
+which turns "don't be seen" into the more interesting "don't be seen somewhere
+you have no business being".
+
+An `Outfit` lists the zones it makes you look native to. The right uniform kills
+that pressure entirely and cuts your `VisibleGuilt` by more than half, because a
+chef carrying a pan across a kitchen is not a suspicious sight. It hides your
+role, not your face: NPCs with Observance above 0.8 accumulate doubt anyway,
+scaled by how good the disguise is.
+
+That trickle exposed a real conflict. `RaiseSuspicion` de-duplicates repeat hits
+within 1.5s, because one visible action reaches it down three separate paths and
+used to stack three penalties. Applied to a per-tick source that rule quartered
+every tick and decay ate the rest, so trespassing did nothing at all. Continuous
+sources now pass `continuous: true` and skip the de-duplication.
+
+---
+
 ## Stealth verbs
 
 Beyond direct sabotage the player has four ways to manage attention:
@@ -230,7 +287,7 @@ flailing its arms really is above the boiling point.
 | `SimRunner.cs` | owns the `Simulation`, ticks it, handles interaction channelling |
 | `LevelView.cs` | textured surfaces, doors, vision cones, colour by anger |
 | `CharacterRig.cs` | box characters, procedural walk/sit/investigate/rage |
-| `AudioDirector.cs` | sound from events, tension bed driven by suspicion |
+| `AudioDirector.cs` | sound from events, per-character voices, ambient and tension beds |
 | `PlayerController.cs` | character controller, third/first person camera |
 | `GameHud.cs` | IMGUI HUD, world-space labels, debug overlay |
 
@@ -268,15 +325,26 @@ engine dependency, and it is the only file that should need to change.
   cannot be serialised or edited outside code. If the game grows past a handful of
   levels this should become data (ScriptableObjects or JSON) with the delegates
   reduced to a small set of named effect types.
-- **Movement is straight-line with wall sliding**, not pathfinding. Fine for two
-  rooms; the moment a level has a U-shaped corridor, swap in NavMesh (Unity side)
-  or an A\* grid (core side, to keep it testable).
-- **Time spent walking is high** (roughly two thirds for front-of-house staff).
-  The knobs are `DistanceFalloff` half-life in `UtilityAi`, NPC `MoveSpeed`, and
-  giving each zone its own facilities so NPCs are not crossing the level for every
-  need.
-- **One level's content lives in one static class.** Fine now, will not scale past
-  three or four levels.
+- **Movement is straight-line with wall sliding plus portal steering.** When the
+  direct line is blocked, NPCs head for the nearest doorway in `World.Portals`
+  first, and a stuck timer makes them give up rather than freeze. That is enough
+  for two rooms and a doorway; a U-shaped corridor still wants NavMesh (Unity
+  side) or an A\* grid (core side, to keep it testable).
+
+  This was originally written up as a tuning problem — "NPCs spend two thirds of
+  their time walking, try adjusting `DistanceFalloff`". That diagnosis was wrong.
+  They were **wedged against the dividing wall**: sliding has no way around a
+  corner, so any NPC whose target sat across the room slid until it stopped making
+  progress and then stood there for the rest of the level. Adding portal steering
+  took Eva from 263s of walking in a 300s run to 51s, and gave everyone real
+  routines. Worth remembering as a warning about tuning numbers before checking
+  whether the mechanism works.
+- **Reusable props live in `ItemCatalogue`**, level-specific interplay in the
+  level file. `KitchenLevel` is now composition plus the bespoke stove/pan/salt
+  wiring. Adding a prop to the catalogue makes it available to every future level,
+  and every NPC understands it immediately because behaviour lives in affordances.
+- **Affordance preconditions are still delegates**, so the catalogue cannot be
+  serialised or edited outside code. That is the next real refactor if this grows.
 - **No save system or main menu.** Deliberate.
 - **Characters are boxes.** Deliberate for now; `CharacterRig` is the only class
   that has to change when real models arrive.

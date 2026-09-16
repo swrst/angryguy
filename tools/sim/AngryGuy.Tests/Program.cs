@@ -46,6 +46,19 @@ namespace AngryGuy.Tests
             Test("Sneaking shortens the range you are spotted at", SneakingShortensSpotting);
             Test("Throwing lands the object away from you and makes noise", ThrowingMakesNoiseElsewhere);
             Test("Suspicion changes are reported to the player", SuspicionIsReported);
+            Test("An NPC can path around the wall to the other room", PortalRoutingWorks);
+            Test("An NPC that cannot reach its target gives up", StuckNpcGivesUp);
+            Test("Anger at the ceiling reports nothing, not a phantom gain", ClampedAngerReportsNothing);
+
+            Test("Wrong clothes in a staff area draw suspicion", TrespassingIsSuspicious);
+            Test("The right uniform makes you belong", DisguiseRemovesSuspicion);
+            Test("Killing the lights shortens how far people see", DarknessShortensSight);
+            Test("The fire alarm empties the building", AlarmEvacuates);
+
+            Test("Misfortune makes an NPC wary, then certain", WarinessBuilds);
+            Test("People enjoy the misfortune of someone they dislike", Schadenfreude);
+            Test("Public failure is worse than private failure", AudienceMakesItWorse);
+
             Test("Same seed produces the same run", RunDeterminism);
 
             Test("End to end: the chef can be driven furious", EndToEndAngerRises);
@@ -567,6 +580,225 @@ namespace AngryGuy.Tests
 
             AssertTrue(reported,
                 "a suspicion increase the player caused must surface as feedback with a number");
+        }
+
+        private static void PortalRoutingWorks()
+        {
+            Simulation sim = KitchenLevel.Build(300);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // Far corner of the dining room, target deep in the kitchen: the
+            // straight line is blocked and sliding alone dead-ends in a corner.
+            terry.Position = new Vec3(7f, 0f, 7f);
+            terry.MoveTarget = new Vec3(-7f, 0f, 6.4f);
+
+            for (int i = 0; i < Needs.Count; i++) terry.Needs.Set((NeedType)i, 0.95f);
+            terry.Needs.Set(NeedType.Order, 0.02f);
+
+            RunFor(sim, 40f);
+
+            float distance = Vec3.FlatDistance(terry.Position, new Vec3(-7f, 0f, 6.4f));
+            AssertTrue(terry.Position.X < 0f,
+                "he should have got through the doorway into the kitchen, ended at " + terry.Position);
+        }
+
+        private static void StuckNpcGivesUp()
+        {
+            Simulation sim = KitchenLevel.Build(301);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // A target outside the world entirely: unreachable by any route.
+            terry.Activity = NpcActivity.Walking;
+            terry.CurrentPlan = null;
+            terry.MoveTarget = new Vec3(-9.9f, 0f, -9.9f);
+            terry.ClosestApproach = 0f;
+
+            RunFor(sim, 10f);
+
+            AssertTrue(terry.Activity != NpcActivity.Walking || terry.StuckTimer < 6f,
+                "an NPC that cannot make progress must give up rather than freeze");
+        }
+
+        private static void ClampedAngerReportsNothing()
+        {
+            Simulation sim = KitchenLevel.Build(302);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            chef.Anger = 1f;
+            sim.Feedback.Drain();
+
+            AngerModel.Add(chef, 0.5f, sim, "test");
+
+            List<FeedbackEvent> events = sim.Feedback.Drain();
+            for (int i = 0; i < events.Count; i++)
+            {
+                AssertTrue(events[i].Kind != FeedbackKind.Anger,
+                    "anger already at the ceiling must not report a gain that did not happen");
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Disguises, light, alarm
+        // ------------------------------------------------------------------
+
+        private static void TrespassingIsSuspicious()
+        {
+            Simulation sim = KitchenLevel.Build(310);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            // Standing in the middle of the kitchen in your own clothes, watched.
+            sim.Player.Position = new Vec3(-5f, 0f, 1f);
+            sim.Player.Outfit = Outfit.Civilian();
+            chef.Position = new Vec3(-3.5f, 0f, 1f);
+            chef.Facing = (sim.Player.Position - chef.Position).Normalized;
+
+            float before = chef.SuspicionOf(PlayerAvatar.PlayerId);
+            for (int i = 0; i < 100; i++)
+            {
+                chef.Facing = (sim.Player.Position - chef.Position).Normalized;
+                sim.Tick(0.1f);
+            }
+
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) > before + 0.05f,
+                "loitering in the kitchen in civvies should be noticed (" +
+                chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        private static void DisguiseRemovesSuspicion()
+        {
+            Simulation sim = KitchenLevel.Build(310);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            sim.Player.Position = new Vec3(-5f, 0f, 1f);
+            sim.Player.Outfit = Outfit.ChefWhites();
+            chef.Position = new Vec3(-3.5f, 0f, 1f);
+
+            for (int i = 0; i < 100; i++)
+            {
+                chef.Facing = (sim.Player.Position - chef.Position).Normalized;
+                sim.Tick(0.1f);
+            }
+
+            // Gordon is not especially observant, so the whites hold up for him.
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) < 0.05f,
+                "in chef's whites the kitchen should be safe ground (" +
+                chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
+        }
+
+        private static void DarknessShortensSight()
+        {
+            Simulation sim = KitchenLevel.Build(311);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+
+            eva.Position = new Vec3(0f, 0f, -5f);
+            eva.Facing = new Vec3(1f, 0f, 0f);
+            sim.Player.Position = new Vec3(eva.Position.X + eva.Perception.SightRange * 0.8f, 0f, eva.Position.Z);
+
+            AssertTrue(sim.CanSeePlayer(eva), "with the lights on she can see that far");
+
+            sim.World.LightLevel = 0.35f;
+            AssertTrue(!sim.CanSeePlayer(eva), "in the dark that range should be well out of reach");
+        }
+
+        private static void AlarmEvacuates()
+        {
+            Simulation sim = KitchenLevel.Build(312);
+            Zone assembly = sim.World.GetZone("assembly");
+            AssertTrue(assembly != null, "the level needs an assembly point");
+
+            sim.TriggerAlarm(30f);
+            RunFor(sim, 25f);
+
+            int outside = 0;
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                if (Vec3.FlatDistance(sim.World.Npcs[i].Position, assembly.Center) < 5f) outside++;
+            }
+
+            AssertTrue(outside >= 3,
+                "most of the staff should have headed for the assembly point (" + outside + "/4)");
+        }
+
+        // ------------------------------------------------------------------
+        // The mind
+        // ------------------------------------------------------------------
+
+        private static void WarinessBuilds()
+        {
+            Npc npc = new Npc { Id = "n", Name = "N", Personality = Personality.Manager() };
+
+            AssertTrue(!npc.Mind.SuspectsSabotage, "one quiet shift, nothing to suspect");
+
+            for (int i = 0; i < 6; i++) npc.Mind.Misfortune(0.6f, npc.Personality);
+
+            AssertTrue(npc.Mind.SuspectsSabotage,
+                "after six things go wrong a paranoid manager should stop believing in luck (" +
+                npc.Mind.Wariness + ")");
+            AssertTrue(npc.EffectiveParanoia > npc.Personality.Paranoia - 0.001f,
+                "wariness should make them harder to fool");
+        }
+
+        private static void Schadenfreude()
+        {
+            Simulation sim = KitchenLevel.Build(320);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // Gordon dislikes Terry out of the box and is standing right there.
+            terry.Position = new Vec3(-5f, 0f, 3f);
+            chef.Position = new Vec3(-3.5f, 0f, 3f);
+            chef.Facing = (terry.Position - chef.Position).Normalized;
+
+            // Spill directly at Terry's feet: this test is about the reaction,
+            // not about whether the player could reach the bottle.
+            ItemCatalogue.Spill(sim, terry.Position, PlayerAvatar.PlayerId, "oil");
+
+            RunFor(sim, 6f);
+
+            AssertTrue(chef.Mind.Amusement > 0.1f || terry.Mind.Embarrassment > 0.1f,
+                "someone going over in front of a colleague should land emotionally " +
+                "(amusement " + chef.Mind.Amusement + ", embarrassment " + terry.Mind.Embarrassment + ")");
+        }
+
+        private static void AudienceMakesItWorse()
+        {
+            float alone = RunSlipTest(false);
+            float watched = RunSlipTest(true);
+
+            AssertTrue(watched > alone,
+                "slipping over in front of people should hurt more than slipping alone (" +
+                alone + " vs " + watched + ")");
+        }
+
+        private static float RunSlipTest(bool withAudience)
+        {
+            Simulation sim = KitchenLevel.Build(321);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            terry.Position = new Vec3(-5f, 0f, 3f);
+
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc other = sim.World.Npcs[i];
+                if (other == terry) continue;
+
+                if (withAudience)
+                {
+                    other.Position = new Vec3(-3.5f, 0f, 3f);
+                    other.Facing = (terry.Position - other.Position).Normalized;
+                }
+                else
+                {
+                    other.Position = new Vec3(8f, 0f, 8f);
+                    other.Facing = new Vec3(1f, 0f, 0f);
+                }
+            }
+
+            sim.Player.Position = new Vec3(9f, 0f, -9f);
+            ItemCatalogue.Spill(sim, terry.Position, PlayerAvatar.PlayerId, "oil");
+            RunFor(sim, 5f);
+
+            return terry.PeakAnger;
         }
 
         private static void RunDeterminism()

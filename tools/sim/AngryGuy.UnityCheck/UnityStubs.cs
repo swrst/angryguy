@@ -349,6 +349,7 @@ namespace UnityEngine
         public static Color color { get; set; }
         public static void Box(Rect position, GUIContent content) { }
         public static void Label(Rect position, string text, GUIStyle style) { }
+        public static bool Button(Rect position, string text) { return false; }
         public static void DrawTexture(Rect position, Texture image) { }
     }
 
@@ -367,6 +368,11 @@ namespace UnityEngine
     public class RuntimeInitializeOnLoadMethodAttribute : Attribute
     {
         public RuntimeInitializeOnLoadMethodAttribute(RuntimeInitializeLoadType type) { }
+    }
+
+    public static class Application
+    {
+        public static void Quit() { }
     }
 
     public static class Debug

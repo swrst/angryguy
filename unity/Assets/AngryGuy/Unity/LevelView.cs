@@ -419,6 +419,11 @@ namespace AngryGuy.UnityLayer
             if (obj.IsBroken) return new Color(0.85f, 0.35f, 0.2f);
             if (obj.HasTag(Tags.Hiding)) return new Color(0.75f, 0.7f, 0.85f);
             if (obj.HasTag(Tags.Door)) return new Color(0.85f, 0.8f, 0.7f);
+
+            // The loud, dangerous things read red so the player clocks them from
+            // across the room and has to decide whether it is worth it.
+            if (obj.HasTag(Tags.Noisy)) return new Color(0.92f, 0.3f, 0.28f);
+
             if (obj.OwnerId.Length > 0) return new Color(0.78f, 0.82f, 0.95f);
             return new Color(0.88f, 0.88f, 0.86f);
         }

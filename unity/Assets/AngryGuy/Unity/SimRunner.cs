@@ -55,6 +55,10 @@ namespace AngryGuy.UnityLayer
         public readonly List<Popup> Popups = new List<Popup>();
         public readonly List<Toast> Toasts = new List<Toast>();
 
+        /// <summary>True while the start menu is up and the world is frozen.</summary>
+        public bool InMenu = true;
+
+        private readonly Dictionary<string, string> _lastSpoken = new Dictionary<string, string>();
         private List<InteractionOption> _interactions = new List<InteractionOption>();
         private float _interactionRefresh;
         private int _hintStage;
@@ -100,13 +104,24 @@ namespace AngryGuy.UnityLayer
 
             if (GetComponent<GameHud>() == null) gameObject.AddComponent<GameHud>();
 
-            PushToast("Make Gordon furious. Don't let anyone work out it was you.",
-                new Color(1f, 0.9f, 0.5f), 7f);
+            if (!InMenu)
+            {
+                PushToast("Make Gordon furious. Don't let anyone work out it was you.",
+                    new Color(1f, 0.9f, 0.5f), 7f);
+            }
         }
 
         private void Update()
         {
             if (Sim == null) return;
+
+            // The menu freezes the world rather than deferring its construction,
+            // so the level is visible behind it and Play is instant.
+            if (InMenu)
+            {
+                View.Sync(Sim, 0f, "");
+                return;
+            }
 
             float dt = Time.deltaTime * TimeScale;
             GameOutcome before = Sim.Outcome;
@@ -130,6 +145,7 @@ namespace AngryGuy.UnityLayer
 
             Focus = ChooseFocus();
 
+            TickSpeech();
             Audio.TickPlayer(Player.IsMoving, Player.Sneaking, dt, Player.transform.position);
             Audio.TickTension(HighestSuspicion(), dt);
 
@@ -198,6 +214,28 @@ namespace AngryGuy.UnityLayer
                         break;
                 }
             }
+        }
+
+        /// <summary>Play a voice clip the moment an NPC starts saying something new.</summary>
+        private void TickSpeech()
+        {
+            for (int i = 0; i < Sim.World.Npcs.Count; i++)
+            {
+                Npc npc = Sim.World.Npcs[i];
+
+                string previous;
+                _lastSpoken.TryGetValue(npc.Id, out previous);
+                if (previous == npc.Speech) continue;
+
+                _lastSpoken[npc.Id] = npc.Speech;
+                if (npc.Speech.Length > 0) Audio.Speak(npc, npc.Speech);
+            }
+        }
+
+        /// <summary>Begin play from the menu.</summary>
+        public void BeginPlay()
+        {
+            InMenu = false;
         }
 
         private Vector3 HeadPosition(string actorId)
@@ -386,11 +424,13 @@ namespace AngryGuy.UnityLayer
         public void Restart()
         {
             StartLevel(Random.Range(1, int.MaxValue));
+            InMenu = false;
         }
 
         public void Retry()
         {
             StartLevel(Seed);
+            InMenu = false;
         }
     }
 }
