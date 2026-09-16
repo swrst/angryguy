@@ -178,6 +178,36 @@ def voice(duration, base, wobble, growl=0.0, brightness=1.0):
     return out
 
 
+def repair():
+    """Someone putting a thing right: a couple of taps and a satisfied clunk."""
+    d = 0.9
+    out = np.zeros(int(RATE * d))
+    for i, at in enumerate((0.0, 0.16, 0.34)):
+        tap = env(sine(900 - i * 120, 0.09) * 0.7 + highpass(noise(0.09), 3000) * 0.3,
+                  attack=0.001, decay=0.04, release=0.04)
+        start = int(RATE * at)
+        out[start:start + len(tap)] += tap * (0.9 - i * 0.15)
+
+    clunk = env(lowpass(noise(0.3), 700) + sine(180, 0.3) * 0.6,
+                attack=0.002, decay=0.12, release=0.15)
+    start = int(RATE * 0.5)
+    out[start:start + len(clunk)] += clunk * 0.8
+    return normalise(out)
+
+
+def clatter():
+    """Pip knocking something over. Loud, harmless, and somebody else's fault."""
+    d = 1.0
+    out = np.zeros(int(RATE * d))
+    rng = np.random.default_rng(7)
+    for at in rng.uniform(0.0, 0.55, 6):
+        ping = env(sine(rng.uniform(1200, 3000), 0.18) * 0.5 + highpass(noise(0.18), 3500) * 0.5,
+                   attack=0.0005, decay=0.06, release=0.1)
+        start = int(RATE * at)
+        out[start:start + len(ping)] += ping * rng.uniform(0.4, 1.0)
+    return normalise(out)
+
+
 def grumble():
     d = 0.9
     out = voice(d, base=95, wobble=0.05, growl=0.25, brightness=0.8)
@@ -289,6 +319,10 @@ VOICE_PROFILES = {
     "bright": dict(base=185, wobble=0.13, growl=0.05, brightness=1.30),
     "soft": dict(base=128, wobble=0.04, growl=0.10, brightness=0.95),
     "crisp": dict(base=150, wobble=0.08, growl=0.03, brightness=1.12),
+    # Bruno: level, unhurried, almost bored. He has done this before.
+    "flat": dict(base=118, wobble=0.02, growl=0.14, brightness=0.88),
+    # Pip: thin, fast, a bit too high. Reads as young and harmless.
+    "reedy": dict(base=212, wobble=0.18, growl=0.02, brightness=1.45),
 }
 
 
@@ -363,6 +397,10 @@ SOUNDS = {
     "tension_loop": tension_loop,
     "music_ambient": ambient_bed,
 }
+
+
+SOUNDS["repair"] = repair
+SOUNDS["clatter"] = clatter
 
 
 if __name__ == "__main__":

@@ -37,52 +37,118 @@ namespace AngryGuy.UnityLayer
 
         private const float HipHeight = 0.92f;
 
+        private float _hipHeight = HipHeight;
+
         public void Build(Transform parent, string name, Color uniform, Color skin,
             Materials materials, bool wearsHat)
+        {
+            CharacterBuild build = CharacterBuild.Default;
+            build.Hat = wearsHat ? HatKind.Toque : HatKind.None;
+            Build(parent, name, uniform, skin, materials, build);
+        }
+
+        /// <summary>
+        /// Build a body from a silhouette description.
+        ///
+        /// Six people in one room have to be telling apart at a glance and from
+        /// behind, in a game where noticing who is where is the whole skill. So
+        /// height, width, head size, headgear and hair all vary - the shape says
+        /// who it is long before the colour does.
+        /// </summary>
+        public void Build(Transform parent, string name, Color uniform, Color skin,
+            Materials materials, CharacterBuild build)
         {
             GameObject root = new GameObject(name);
             root.transform.SetParent(parent, false);
             Root = root.transform;
 
-            _hips = MakeNode(Root, "hips", new Vector3(0f, HipHeight, 0f));
+            float h = build.Height;
+            float w = build.Girth;
+
+            _hipHeight = HipHeight * h;
+            _hips = MakeNode(Root, "hips", new Vector3(0f, _hipHeight, 0f));
 
             _torso = MakeBox(_hips, "torso",
-                new Vector3(0f, 0.28f, 0f), new Vector3(0.52f, 0.62f, 0.3f), uniform, materials);
+                new Vector3(0f, 0.28f * h, 0f),
+                new Vector3(0.52f * w, 0.62f * h, 0.3f * w), uniform, materials);
             _torsoRenderer = _torso.GetComponent<Renderer>();
+
+            if (build.WearsApron)
+            {
+                MakeBox(_torso, "apron",
+                    new Vector3(0f, -0.12f, 0.55f), new Vector3(0.86f, 0.72f, 0.12f),
+                    build.ApronColour, materials);
+            }
 
             // The head is an UNSCALED pivot with the skull as a child. Parenting
             // meshes directly under a scaled cube multiplies their scale too - a
             // 0.1 nose under a 0.34 head renders at 0.034 and vanishes.
-            _head = MakeNode(_hips, "head", new Vector3(0f, 0.76f, 0f));
+            _head = MakeNode(_hips, "head", new Vector3(0f, 0.76f * h, 0f));
 
-            Transform skull = MakeBox(_head, "skull",
-                Vector3.zero, new Vector3(0.34f, 0.34f, 0.34f), skin, materials);
+            float s = 0.34f * build.HeadScale;
+            Transform skull = MakeBox(_head, "skull", Vector3.zero, new Vector3(s, s, s), skin, materials);
             _headRenderer = skull.GetComponent<Renderer>();
 
             // A nose, so facing is unmistakable from any angle.
             MakeBox(_head, "nose",
-                new Vector3(0f, -0.02f, 0.21f), new Vector3(0.1f, 0.1f, 0.14f),
+                new Vector3(0f, -0.02f, s * 0.62f), new Vector3(0.1f, 0.1f, 0.14f),
                 new Color(0.2f, 0.18f, 0.18f), materials);
 
-            if (wearsHat)
+            if (build.HasHair)
             {
-                MakeBox(_head, "hat",
-                    new Vector3(0f, 0.27f, 0f), new Vector3(0.42f, 0.3f, 0.42f),
-                    Color.white, materials);
+                MakeBox(_head, "hair",
+                    new Vector3(0f, s * 0.42f, -s * 0.08f),
+                    new Vector3(s * 1.06f, s * 0.42f, s * 1.06f), build.HairColour, materials);
+            }
+
+            switch (build.Hat)
+            {
+                case HatKind.Toque:
+                    MakeBox(_head, "toque",
+                        new Vector3(0f, s * 0.5f, 0f), new Vector3(s * 1.24f, s * 0.24f, s * 1.24f),
+                        Color.white, materials);
+                    MakeBox(_head, "toque_top",
+                        new Vector3(0f, s * 1.05f, 0f), new Vector3(s * 1.06f, s * 0.9f, s * 1.06f),
+                        Color.white, materials);
+                    break;
+
+                case HatKind.Cap:
+                    MakeBox(_head, "cap",
+                        new Vector3(0f, s * 0.58f, 0f), new Vector3(s * 1.1f, s * 0.36f, s * 1.1f),
+                        build.HatColour, materials);
+                    MakeBox(_head, "peak",
+                        new Vector3(0f, s * 0.46f, s * 0.78f), new Vector3(s * 1.0f, s * 0.1f, s * 0.6f),
+                        build.HatColour, materials);
+                    break;
+
+                case HatKind.Bun:
+                    MakeBox(_head, "bun",
+                        new Vector3(0f, s * 0.52f, -s * 0.5f), new Vector3(s * 0.5f, s * 0.5f, s * 0.5f),
+                        build.HairColour, materials);
+                    break;
+            }
+
+            if (build.HasGlasses)
+            {
+                MakeBox(_head, "glasses",
+                    new Vector3(0f, s * 0.14f, s * 0.52f), new Vector3(s * 1.02f, s * 0.16f, s * 0.08f),
+                    new Color(0.1f, 0.1f, 0.12f), materials);
             }
 
             // Limbs hang from pivot nodes so rotation happens at the joint,
             // not through the middle of the limb.
-            _shoulderL = MakeNode(_hips, "shoulderL", new Vector3(-0.33f, 0.52f, 0f));
-            _shoulderR = MakeNode(_hips, "shoulderR", new Vector3(0.33f, 0.52f, 0f));
-            MakeBox(_shoulderL, "armL", new Vector3(0f, -0.24f, 0f), new Vector3(0.14f, 0.5f, 0.14f), skin, materials);
-            MakeBox(_shoulderR, "armR", new Vector3(0f, -0.24f, 0f), new Vector3(0.14f, 0.5f, 0.14f), skin, materials);
+            _shoulderL = MakeNode(_hips, "shoulderL", new Vector3(-0.33f * w, 0.52f * h, 0f));
+            _shoulderR = MakeNode(_hips, "shoulderR", new Vector3(0.33f * w, 0.52f * h, 0f));
+            Vector3 arm = new Vector3(0.14f * w, 0.5f * h, 0.14f * w);
+            MakeBox(_shoulderL, "armL", new Vector3(0f, -0.24f * h, 0f), arm, skin, materials);
+            MakeBox(_shoulderR, "armR", new Vector3(0f, -0.24f * h, 0f), arm, skin, materials);
 
-            _hipL = MakeNode(_hips, "hipL", new Vector3(-0.14f, 0f, 0f));
-            _hipR = MakeNode(_hips, "hipR", new Vector3(0.14f, 0f, 0f));
+            _hipL = MakeNode(_hips, "hipL", new Vector3(-0.14f * w, 0f, 0f));
+            _hipR = MakeNode(_hips, "hipR", new Vector3(0.14f * w, 0f, 0f));
             Color trousers = new Color(uniform.r * 0.45f, uniform.g * 0.45f, uniform.b * 0.5f);
-            MakeBox(_hipL, "legL", new Vector3(0f, -0.44f, 0f), new Vector3(0.18f, 0.88f, 0.18f), trousers, materials);
-            MakeBox(_hipR, "legR", new Vector3(0f, -0.44f, 0f), new Vector3(0.18f, 0.88f, 0.18f), trousers, materials);
+            Vector3 leg = new Vector3(0.18f * w, 0.88f * h, 0.18f * w);
+            MakeBox(_hipL, "legL", new Vector3(0f, -0.44f * h, 0f), leg, trousers, materials);
+            MakeBox(_hipR, "legR", new Vector3(0f, -0.44f * h, 0f), leg, trousers, materials);
         }
 
         private static Transform MakeNode(Transform parent, string name, Vector3 localPosition)
@@ -180,14 +246,14 @@ namespace AngryGuy.UnityLayer
             float breathe = Mathf.Sin(_bobPhase) * 0.012f;
             float rage = anger >= 0.85f ? Mathf.Sin(Time.time * 40f) * 0.02f : 0f;
 
-            _hips.localPosition = new Vector3(rage, HipHeight + bob + breathe, 0f);
+            _hips.localPosition = new Vector3(rage, _hipHeight + bob + breathe, 0f);
             _hips.localRotation = Quaternion.Euler(speed * 6f, 0f, 0f);
             _torso.localRotation = Quaternion.Euler(0f, Mathf.Sin(_walkPhase) * 4f, 0f);
         }
 
         private void PoseSitting()
         {
-            _hips.localPosition = new Vector3(0f, HipHeight - 0.34f, 0f);
+            _hips.localPosition = new Vector3(0f, _hipHeight - 0.34f, 0f);
             _hips.localRotation = Quaternion.identity;
             _hipL.localRotation = Quaternion.Euler(-80f, 0f, 0f);
             _hipR.localRotation = Quaternion.Euler(-80f, 0f, 0f);

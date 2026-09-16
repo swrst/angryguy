@@ -19,6 +19,9 @@ namespace AngryGuy.Headless
         private static Simulation _sim;
         private static List<InteractionOption> _lastLook = new List<InteractionOption>();
 
+        /// <summary>Exactly what the player last saw numbered on screen.</summary>
+        private static readonly List<string> _shownLabels = new List<string>();
+
         public static int Main(string[] args)
         {
             int seed = Environment.TickCount;
@@ -221,6 +224,24 @@ namespace AngryGuy.Headless
                 string cmd = parts[0].ToLowerInvariant();
                 string arg = parts.Length > 1 ? string.Join(" ", parts, 1, parts.Length - 1) : "";
 
+                // Verbs people actually type. Rejecting "take 1" when option 1
+                // is literally "Take the good pan" is the front-end being
+                // pedantic at the player, which costs a run and teaches nothing.
+                switch (cmd)
+                {
+                    case "take": case "do": case "u": case "grab": case "pick":
+                        cmd = "use"; break;
+                    case "l": case "examine": case "inspect":
+                        cmd = "look"; break;
+                    case "g": case "walk": case "goto":
+                        cmd = "go"; break;
+                    case "w": case "wait": case "stand":
+                        cmd = "wait"; break;
+                    case "t": cmd = "throw"; break;
+                    case "h": cmd = "hide"; break;
+                    case "q": cmd = "quit"; break;
+                }
+
                 // Typing "1" is what everyone tries first. Accept it.
                 int bareNumber;
                 if (int.TryParse(cmd, out bareNumber))
@@ -380,9 +401,11 @@ namespace AngryGuy.Headless
             }
 
             Console.WriteLine("  Within reach:");
+            _shownLabels.Clear();
             for (int i = 0; i < _lastLook.Count; i++)
             {
                 InteractionOption o = _lastLook[i];
+                _shownLabels.Add(o.Label);
                 Console.WriteLine(string.Format("   {0,2}. {1}{2}",
                     i + 1,
                     o.Label,
@@ -510,15 +533,36 @@ namespace AngryGuy.Headless
                 return;
             }
 
-            if (_lastLook.Count == 0) _lastLook = _sim.GetPlayerInteractions();
+            if (_shownLabels.Count == 0) PrintLook();
 
-            if (index < 1 || index > _lastLook.Count)
+            if (index < 1 || index > _shownLabels.Count)
             {
                 Console.WriteLine("  No such option. Run 'look' again.");
                 return;
             }
 
-            InteractionOption option = _lastLook[index - 1];
+            // The number the player typed refers to the list they were SHOWN,
+            // not to whatever the live list happens to be now. Acting on a
+            // shifted index is how "use 2" ends up putting down the pan you
+            // just picked up, which looks like the game lying to you.
+            string wanted = _shownLabels[index - 1];
+            _lastLook = _sim.GetPlayerInteractions();
+
+            InteractionOption option = null;
+            for (int i = 0; i < _lastLook.Count; i++)
+            {
+                if (_lastLook[i].Label != wanted) continue;
+                option = _lastLook[i];
+                break;
+            }
+
+            if (option == null)
+            {
+                Console.WriteLine("  '" + wanted + "' isn't on offer any more - things have moved on.");
+                PrintLook();
+                return;
+            }
+
             float duration = option.Affordance.Duration;
 
             if (!_sim.PlayerInteract(option))
@@ -537,6 +581,7 @@ namespace AngryGuy.Headless
             }
 
             _lastLook = _sim.GetPlayerInteractions();
+            _shownLabels.Clear();
         }
 
         private static void Throw()

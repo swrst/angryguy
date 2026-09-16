@@ -50,7 +50,10 @@ namespace AngryGuy.UnityLayer
                 "voice_gruff_short", "voice_gruff_mid", "voice_gruff_long",
                 "voice_bright_short", "voice_bright_mid", "voice_bright_long",
                 "voice_soft_short", "voice_soft_mid", "voice_soft_long",
-                "voice_crisp_short", "voice_crisp_mid", "voice_crisp_long"
+                "voice_crisp_short", "voice_crisp_mid", "voice_crisp_long",
+                "voice_flat_short", "voice_flat_mid", "voice_flat_long",
+                "voice_reedy_short", "voice_reedy_mid", "voice_reedy_long",
+                "repair", "clatter"
             };
 
             for (int i = 0; i < names.Length; i++)
@@ -129,11 +132,16 @@ namespace AngryGuy.UnityLayer
 
                 case EventKind.ObjectTaken:
                 case EventKind.ObjectTampered:
-                    At("pickup", e.Position, 0.5f);
+                    // A clumsy NPC knocking something over is loud and obviously
+                    // an accident; the player quietly pocketing it is not.
+                    if (e.Loudness > 0.35f) At("clatter", e.Position, 0.75f);
+                    else At("pickup", e.Position, 0.5f);
                     break;
 
                 case EventKind.Noise:
-                    if (e.ObjectId == "bell") At("bell", e.Position, 0.9f);
+                    // The sound of your sabotage being undone in the next room.
+                    if (e.Description.Contains("sorts out")) At("repair", e.Position, 0.7f);
+                    else if (e.ObjectId == "bell") At("bell", e.Position, 0.9f);
                     else if (e.ObjectId == "door") At("door", e.Position, 0.7f);
                     else if (e.Loudness > 0.5f) At("clink", e.Position, 0.85f);
                     break;
@@ -214,6 +222,8 @@ namespace AngryGuy.UnityLayer
                 case "head chef": return "gruff";
                 case "waiter": return "bright";
                 case "dishwasher": return "soft";
+                case "sous chef": return "flat";
+                case "kitchen porter": return "reedy";
                 default: return "crisp";
             }
         }

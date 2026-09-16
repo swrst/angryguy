@@ -226,6 +226,39 @@ namespace AngryGuy.Core
             return "Not bad, that.";
         }
 
+        public static string StartsFixing(Npc npc, SmartObject obj)
+        {
+            if (npc.Mind.SuspectsSabotage) return "Right. Again. I'll sort it. Again.";
+            if (npc.Personality.Tidiness > 0.85f) return "That's not staying like that.";
+            return "I'll deal with the " + obj.Name + ".";
+        }
+
+        public static string WorkingOnIt(Npc npc, SmartObject obj)
+        {
+            if (obj.IsBroken) return "Right, this is going to take me a minute.";
+            return "Where does this even live...";
+        }
+
+        public static string NotesForLater(Npc npc, SmartObject obj)
+        {
+            if (npc.Personality.Temper > 0.6f) return "The " + obj.Name + ". I'll be having words.";
+            return "I'll get to the " + obj.Name + " in a minute.";
+        }
+
+        public static string FinishedFixing(Npc npc)
+        {
+            if (npc.Mind.Wariness > 0.4f) return "There. And if it happens again I'm asking questions.";
+            if (npc.Personality.Sociability > 0.6f) return "Good as new. You're welcome.";
+            return "Sorted.";
+        }
+
+        public static string Fumbles(Npc npc)
+        {
+            if (npc.Personality.Sociability > 0.6f) return "Whoops! That was me, sorry!";
+            if (npc.Mind.Embarrassment > 0.4f) return "...nobody needs to know about that.";
+            return "Ah. Butterfingers.";
+        }
+
         public static string Pick(Rng rng, List<string> options)
         {
             return options.Count == 0 ? "" : options[rng.NextInt(options.Count)];

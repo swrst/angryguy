@@ -11,7 +11,10 @@ namespace AngryGuy.Core
         Confronting,
         Chatting,
         Watching,
-        Furious
+        Furious,
+
+        /// <summary>Walking over to put something right, then putting it right.</summary>
+        Repairing
     }
 
     /// <summary>
@@ -88,6 +91,26 @@ namespace AngryGuy.Core
         /// <summary>Set while investigating: where they are heading to look.</summary>
         public Vec3 InvestigationPoint;
 
+        /// <summary>Object this NPC is on their way to put right, if any.</summary>
+        public string RepairTargetId = "";
+
+        /// <summary>Seconds of work left on the current repair.</summary>
+        public float RepairTimer;
+
+        /// <summary>
+        /// Something they have clocked but will not down tools for. They will go
+        /// and deal with it the moment they finish what they are doing, which is
+        /// the player's window: catch the fixer mid-task and your trap survives
+        /// long enough to land.
+        /// </summary>
+        public string PendingRepairId = "";
+
+        /// <summary>Stops a diligent NPC re-fixing the same thing in a loop.</summary>
+        public readonly Dictionary<string, float> RepairCooldown = new Dictionary<string, float>();
+
+        /// <summary>Time until this NPC can fumble something again.</summary>
+        public float FumbleCooldown;
+
         public string ConfrontTargetId = "";
 
         /// <summary>Zone they gravitate to when idle.</summary>
@@ -117,6 +140,13 @@ namespace AngryGuy.Core
 
         /// <summary>Anger level at their last public explosion, so they need a fresh reason to do it again.</summary>
         public float AngerAtLastOutburst = -1f;
+
+        /// <summary>
+        /// Drip-fed suspicion banked up until it is worth telling the player
+        /// about. Without this, standing in the wrong room produces a "+1" every
+        /// tick and drowns out the events that matter.
+        /// </summary>
+        public float PendingSuspicionReport;
 
         /// <summary>Last thing they said, surfaced in the HUD as a speech bubble.</summary>
         public string Speech = "";

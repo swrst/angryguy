@@ -264,7 +264,8 @@ namespace AngryGuy.UnityLayer
                 CharacterRig rig = new CharacterRig();
                 Color uniform = UniformFor(npc);
                 Color skin = SkinFor(npc);
-                rig.Build(_root, "Npc_" + npc.Id, uniform, skin, _materials, npc.IsTarget);
+                rig.Build(_root, "Npc_" + npc.Id, uniform, skin, _materials,
+                    CharacterLooks.For(npc.Id));
 
                 _npcViews[npc.Id] = new NpcView
                 {
@@ -435,13 +436,15 @@ namespace AngryGuy.UnityLayer
                 case "head chef": return new Color(0.94f, 0.94f, 0.92f);
                 case "waiter": return new Color(0.25f, 0.3f, 0.55f);
                 case "dishwasher": return new Color(0.35f, 0.5f, 0.42f);
+                case "sous chef": return new Color(0.88f, 0.89f, 0.93f);
+                case "kitchen porter": return new Color(0.5f, 0.45f, 0.3f);
                 default: return new Color(0.28f, 0.28f, 0.32f);
             }
         }
 
         private static Color SkinFor(Npc npc)
         {
-            // Just enough variation that four people are distinguishable at range.
+            // Just enough variation that the cast is distinguishable at range.
             int hash = 0;
             for (int i = 0; i < npc.Id.Length; i++) hash = hash * 31 + npc.Id[i];
             float t = Mathf.Abs((hash % 100) / 100f);

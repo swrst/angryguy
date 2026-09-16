@@ -36,6 +36,20 @@ namespace AngryGuy.Core
         /// <summary>Slows anger and suspicion decay. High grudge = never lets it go.</summary>
         public float Grudge = 0.5f;
 
+        /// <summary>
+        /// The urge to put things right rather than just be annoyed about them.
+        /// A diligent NPC walks over and repairs, cleans or re-shelves whatever
+        /// they find wrong, which puts a clock on every trap the player sets.
+        /// </summary>
+        public float Diligence = 0.15f;
+
+        /// <summary>
+        /// Chance of knocking things over, dropping what they carry and generally
+        /// generating background chaos. Someone clumsy in the building is cover:
+        /// blame has somewhere innocent to land.
+        /// </summary>
+        public float Clumsiness = 0.05f;
+
         public Personality Clone()
         {
             return new Personality
@@ -48,7 +62,9 @@ namespace AngryGuy.Core
                 Territoriality = Territoriality,
                 Observance = Observance,
                 Gullibility = Gullibility,
-                Grudge = Grudge
+                Grudge = Grudge,
+                Diligence = Diligence,
+                Clumsiness = Clumsiness
             };
         }
 
@@ -67,6 +83,8 @@ namespace AngryGuy.Core
             if (Observance < 0.3f) parts.Add("oblivious");
             if (Gullibility > 0.7f) parts.Add("credulous");
             if (Grudge > 0.7f) parts.Add("holds grudges");
+            if (Diligence > 0.7f) parts.Add("tidies up after everyone");
+            if (Clumsiness > 0.55f) parts.Add("clumsy");
             return parts.Count == 0 ? "unremarkable" : string.Join(", ", parts.ToArray());
         }
 
@@ -137,6 +155,55 @@ namespace AngryGuy.Core
                 Observance = 0.95f,
                 Gullibility = 0.25f,
                 Grudge = 0.70f
+            };
+        }
+
+        /// <summary>
+        /// The fixer. Loyal to the chef, and constitutionally unable to walk past
+        /// a broken thing. He is the reason sabotage has a shelf life: set a trap
+        /// and he may well have tidied it away before the target ever reaches it.
+        /// The player's counter-play is to keep him busy, keep him out, or set
+        /// traps where he does not patrol.
+        /// </summary>
+        public static Personality SousChef()
+        {
+            return new Personality
+            {
+                Temper = 0.55f,
+                Tidiness = 0.90f,
+                Paranoia = 0.55f,
+                Sociability = 0.40f,
+                Gluttony = 0.45f,
+                Territoriality = 0.55f,
+                Observance = 0.75f,
+                Gullibility = 0.35f,
+                Grudge = 0.45f,
+                Diligence = 0.95f,
+                Clumsiness = 0.05f
+            };
+        }
+
+        /// <summary>
+        /// The wildcard. Drops things, moves things, makes noise. He generates
+        /// genuine background anomalies, which is what gives the player
+        /// deniability: in a building where things go wrong on their own, an
+        /// accusation is a much harder sell.
+        /// </summary>
+        public static Personality Porter()
+        {
+            return new Personality
+            {
+                Temper = 0.30f,
+                Tidiness = 0.20f,
+                Paranoia = 0.15f,
+                Sociability = 0.70f,
+                Gluttony = 0.80f,
+                Territoriality = 0.15f,
+                Observance = 0.25f,
+                Gullibility = 0.85f,
+                Grudge = 0.15f,
+                Diligence = 0.10f,
+                Clumsiness = 0.85f
             };
         }
     }

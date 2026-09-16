@@ -59,6 +59,11 @@ namespace AngryGuy.Tests
             Test("People enjoy the misfortune of someone they dislike", Schadenfreude);
             Test("Public failure is worse than private failure", AudienceMakesItWorse);
 
+            Test("A diligent NPC undoes sabotage he finds", TheFixerFixesThings);
+            Test("The fixer notes a problem but finishes his task first", FixerFinishesFirst);
+            Test("Subtle tampering survives being tidied up", SubtleTamperSurvivesRepair);
+            Test("A clumsy NPC creates anomalies but no anger", ClumsinessIsHarmless);
+
             Test("Same seed produces the same run", RunDeterminism);
 
             Test("End to end: the chef can be driven furious", EndToEndAngerRises);
@@ -736,6 +741,101 @@ namespace AngryGuy.Tests
                 npc.Mind.Wariness + ")");
             AssertTrue(npc.EffectiveParanoia > npc.Personality.Paranoia - 0.001f,
                 "wariness should make them harder to fool");
+        }
+
+        // ------------------------------------------------------------------
+        // The fixer and the wildcard
+        // ------------------------------------------------------------------
+
+        private static void TheFixerFixesThings()
+        {
+            Simulation sim = KitchenLevel.Build(404);
+            Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
+            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+
+            // Get everyone else out of the way so this is unambiguously Bruno.
+            ParkEveryoneExcept(sim, bruno);
+
+            stove.SetState(StateKeys.Broken, 1f);
+            bruno.Position = new Vec3(stove.Position.X + 1.5f, 0f, stove.Position.Z);
+
+            AssertTrue(sim.TryStartRepair(bruno, stove), "an idle fixer should take the job");
+
+            RunFor(sim, 25f);
+
+            AssertTrue(stove.GetState(StateKeys.Broken) <= 0f,
+                "Bruno should have the stove working again");
+        }
+
+        private static void FixerFinishesFirst()
+        {
+            Simulation sim = KitchenLevel.Build(405);
+            Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
+            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+
+            stove.SetState(StateKeys.Broken, 1f);
+            bruno.Activity = NpcActivity.Using;
+            bruno.ActivityTimer = 20f;
+
+            AssertTrue(!sim.TryStartRepair(bruno, stove),
+                "he should not down tools the instant he sees a problem");
+            AssertTrue(bruno.PendingRepairId == stove.Id,
+                "but he should remember it for when he is free");
+        }
+
+        private static void SubtleTamperSurvivesRepair()
+        {
+            Simulation sim = KitchenLevel.Build(406);
+            Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
+            SmartObject salt = sim.World.GetObject(KitchenLevel.Ids.Salt);
+
+            ParkEveryoneExcept(sim, bruno);
+
+            // Swapped contents, and knocked off its shelf so he has a reason to
+            // come over. Tidying it away must not undo the swap: the whole point
+            // of subtle sabotage is that looking at it tells you nothing.
+            salt.SetState(StateKeys.Tampered, 1f);
+            salt.SetState(StateKeys.Subtle, 1f);
+            salt.Position = new Vec3(salt.HomePosition.X + 3f, 0f, salt.HomePosition.Z + 1f);
+            bruno.Position = new Vec3(salt.Position.X + 1f, 0f, salt.Position.Z);
+
+            AssertTrue(sim.TryStartRepair(bruno, salt), "an out-of-place shaker is a job");
+
+            RunFor(sim, 25f);
+
+            AssertTrue(salt.GetState(StateKeys.Subtle) > 0f && salt.GetState(StateKeys.Tampered) > 0f,
+                "the salt is still sugar however neatly it is shelved");
+        }
+
+        private static void ClumsinessIsHarmless()
+        {
+            Simulation sim = KitchenLevel.Build(407);
+            Npc pip = sim.World.GetNpc(KitchenLevel.Ids.Porter);
+
+            AssertTrue(pip.Personality.Clumsiness > 0.5f, "Pip is the clumsy one");
+
+            RunFor(sim, 300f);
+
+            // The point of Pip is deniability, and deniability is worthless if he
+            // also drives the target up the wall on his own. Every scrap of anger
+            // in this game has to be traceable to the player.
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc npc = sim.World.Npcs[i];
+                AssertTrue(npc.Anger < 0.05f,
+                    npc.Name + " should be calm in an empty kitchen (" + npc.Anger + ")");
+            }
+        }
+
+        /// <summary>Move everyone but one NPC far away, so a test observes one actor.</summary>
+        private static void ParkEveryoneExcept(Simulation sim, Npc keep)
+        {
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc npc = sim.World.Npcs[i];
+                if (npc == keep) continue;
+                npc.Position = new Vec3(60f + i * 3f, 0f, 60f);
+            }
         }
 
         private static void Schadenfreude()

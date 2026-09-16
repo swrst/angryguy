@@ -185,12 +185,14 @@ namespace AngryGuy.Core
             npc.ConfrontCooldown -= dt;
             npc.OutburstCooldown -= dt;
             npc.DecisionCooldown -= dt;
+            npc.FumbleCooldown -= dt;
             npc.SpeechTimer -= dt;
             if (npc.SpeechTimer <= 0f) npc.Speech = "";
 
             PerceptionSample(npc, dt);
             TickBelonging(npc, dt);
             CheckHazards(npc);
+            TickClumsiness(npc, dt);
 
             // Explode when things get WORSE, not merely while they are still bad.
             // Without the rising check a pegged-out NPC shouts every 26 seconds
@@ -218,6 +220,10 @@ namespace AngryGuy.Core
 
                 case NpcActivity.Investigating:
                     TickInvestigating(npc, dt);
+                    break;
+
+                case NpcActivity.Repairing:
+                    TickRepairing(npc, dt);
                     break;
 
                 case NpcActivity.Confronting:
@@ -381,6 +387,14 @@ namespace AngryGuy.Core
                     npc.StuckTimer = 0f;
                     return;
                 }
+            }
+
+            // Free at last - go and deal with the thing they noticed earlier.
+            if (npc.PendingRepairId.Length > 0)
+            {
+                SmartObject pending = World.GetObject(npc.PendingRepairId);
+                npc.PendingRepairId = "";
+                if (TryStartRepair(npc, pending)) return;
             }
 
             ScoredOption option = UtilityAi.Choose(npc, World, Rng, Time);
@@ -690,6 +704,251 @@ namespace AngryGuy.Core
             npc.DecisionCooldown = 1f;
         }
 
+        // ------------------------------------------------------------------
+        // Putting things right
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Anything a conscientious person would feel compelled to deal with:
+        /// broken, filthy, spilled, or simply not where it lives.
+        /// </summary>
+        public static bool NeedsPuttingRight(SmartObject obj)
+        {
+            if (obj == null || obj.Concealed) return false;
+            if (obj.HeldBy.Length > 0) return false;
+            if (obj.IsBroken) return true;
+            if (obj.HasTag(Tags.Mess) && obj.HasTag(Tags.Hazard)) return true;
+            if (obj.GetState(StateKeys.Dirty) > 0.5f) return true;
+            if (obj.Portable && obj.IsAwayFromHome) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// A diligent NPC who has just clocked a problem goes and fixes it.
+        ///
+        /// This is the single most important pressure on the player: sabotage
+        /// now has a shelf life. Break the stove and Bruno may well have it
+        /// working again before Gordon ever walks over to it. The counter-play
+        /// is to keep him busy, keep him out of the room, or set the trap so
+        /// close to the target's arrival that nobody has time to undo it.
+        /// </summary>
+        public bool TryStartRepair(Npc npc, SmartObject obj)
+        {
+            if (npc.Personality.Diligence < 0.55f) return false;
+            if (!NeedsPuttingRight(obj)) return false;
+            if (npc.Activity == NpcActivity.Repairing) return false;
+            if (npc.Anger >= AngerModel.BoilingPoint) return false;
+
+            float until;
+            if (npc.RepairCooldown.TryGetValue(obj.Id, out until) && until > Time) return false;
+
+            // Mid-task, he notes it and carries on. Sabotage lands in the gap
+            // between him seeing the problem and him being free to deal with it,
+            // so keeping him occupied is a genuine tactic rather than a nuisance.
+            if (npc.Activity == NpcActivity.Using || npc.Activity == NpcActivity.Confronting)
+            {
+                npc.PendingRepairId = obj.Id;
+                npc.Say(Lines.NotesForLater(npc, obj), 3f);
+                return false;
+            }
+
+            npc.PendingRepairId = "";
+            npc.AbandonPlan();
+            npc.RepairTargetId = obj.Id;
+            npc.RepairTimer = 0f;
+            npc.MoveTarget = obj.Position;
+            npc.ClosestApproach = float.MaxValue;
+            npc.StuckTimer = 0f;
+            npc.Activity = NpcActivity.Repairing;
+            npc.Say(Lines.StartsFixing(npc, obj), 3f);
+            return true;
+        }
+
+        private void TickRepairing(Npc npc, float dt)
+        {
+            SmartObject obj = World.GetObject(npc.RepairTargetId);
+            if (obj == null || !NeedsPuttingRight(obj))
+            {
+                // Somebody beat them to it, or the player picked it up again.
+                npc.Activity = NpcActivity.Idle;
+                npc.RepairTargetId = "";
+                npc.DecisionCooldown = 0.8f;
+                return;
+            }
+
+            if (npc.RepairTimer > 0f)
+            {
+                npc.RepairTimer -= dt;
+                if (npc.RepairTimer <= 0f) CompleteRepair(npc, obj);
+                return;
+            }
+
+            npc.MoveTarget = obj.Position;
+            Vec3 goal = npc.MoveTarget;
+            if (!World.HasLineOfSight(npc.Position, goal))
+            {
+                Vec3 portal;
+                if (World.TryFindPortal(npc.Position, goal, out portal)) goal = portal;
+            }
+
+            MoveActor(ref npc.Position, ref npc.Facing, goal, npc.MoveSpeed * dt);
+
+            float remaining = Vec3.FlatDistance(npc.Position, npc.MoveTarget);
+            if (remaining <= 1.3f)
+            {
+                // Putting a shaker back on a shelf is a moment. Getting the knobs
+                // back on a stove is a job, and a job is a window: the player can
+                // watch him kneel down and go and cause trouble somewhere else
+                // while he is committed to it.
+                npc.RepairTimer = obj.IsBroken ? 9f + Rng.Range(0f, 3f) : 3.5f + Rng.Range(0f, 2f);
+                npc.Say(Lines.WorkingOnIt(npc, obj), npc.RepairTimer);
+                return;
+            }
+
+            if (remaining < npc.ClosestApproach - 0.15f)
+            {
+                npc.ClosestApproach = remaining;
+                npc.StuckTimer = 0f;
+            }
+            else
+            {
+                npc.StuckTimer += dt;
+                if (npc.StuckTimer > 6f)
+                {
+                    npc.RepairCooldown[npc.RepairTargetId] = Time + 45f;
+                    npc.RepairTargetId = "";
+                    npc.Activity = NpcActivity.Idle;
+                    npc.DecisionCooldown = 1f;
+                }
+            }
+        }
+
+        private void CompleteRepair(Npc npc, SmartObject obj)
+        {
+            string what = obj.Name;
+
+            if (obj.HasTag(Tags.Mess) && obj.HasTag(Tags.Hazard))
+            {
+                obj.Tags.Remove(Tags.Hazard);
+                obj.Concealed = true;
+            }
+
+            obj.SetState(StateKeys.Broken, 0f);
+            obj.SetState(StateKeys.Dirty, 0f);
+
+            // Subtle tampering survives: he can put the shaker back on the shelf,
+            // but he has no way of knowing the salt inside it is sugar.
+            if (obj.GetState(StateKeys.Subtle) <= 0f) obj.SetState(StateKeys.Tampered, 0f);
+
+            if (obj.Portable && obj.IsAwayFromHome) obj.Position = obj.HomePosition;
+
+            npc.RepairCooldown[obj.Id] = Time + 25f;
+            npc.RepairTargetId = "";
+            npc.Activity = NpcActivity.Idle;
+            npc.DecisionCooldown = 0.8f;
+
+            npc.Needs.Add(NeedType.Order, 0.35f);
+            npc.Mind.Satisfaction(npc.Personality);
+            npc.Say(Lines.FinishedFixing(npc), 3f);
+
+            Log(npc.Name + " puts " + what + " back in order");
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.Noise,
+                Position = obj.Position,
+                TrueActorId = npc.Id,
+                ObjectId = obj.Id,
+                Loudness = 0.25f,
+                Severity = 0f,
+                LeavesEvidence = false,
+                Description = npc.Name + " sorts out " + what
+            });
+
+            Announce(FeedbackKind.Alert, npc.Name + " has undone your work on " + what, npc.Id);
+        }
+
+        // ------------------------------------------------------------------
+        // Butterfingers
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Clumsy NPCs generate real, unexplained anomalies of their own.
+        ///
+        /// This exists for the player's benefit, not for flavour. In a building
+        /// where things go wrong on their own, "someone did this deliberately"
+        /// is a much harder case to make - and there is a walking, credulous
+        /// alternative suspect standing right there.
+        ///
+        /// Deliberately harmless: noise and nudged objects, never damage. The
+        /// invariant that all anger on screen is player-caused has to hold.
+        /// </summary>
+        private void TickClumsiness(Npc npc, float dt)
+        {
+            if (npc.Personality.Clumsiness < 0.5f) return;
+            if (npc.FumbleCooldown > 0f) return;
+            if (npc.Activity != NpcActivity.Walking) return;
+
+            // Roughly one fumble a minute for a very clumsy NPC on the move.
+            if (!Rng.Chance(npc.Personality.Clumsiness * 0.02f * dt * 60f)) return;
+
+            npc.FumbleCooldown = 25f;
+
+            SmartObject victim = null;
+            float best = 2.0f;
+            for (int i = 0; i < World.Objects.Count; i++)
+            {
+                SmartObject candidate = World.Objects[i];
+                if (!candidate.Portable || candidate.HeldBy.Length > 0) continue;
+                if (candidate.OwnerId.Length > 0) continue;   // never their prized things
+                float d = Vec3.FlatDistance(candidate.Position, npc.Position);
+                if (d < best)
+                {
+                    best = d;
+                    victim = candidate;
+                }
+            }
+
+            if (victim == null)
+            {
+                npc.Say(Lines.Fumbles(npc), 2.5f);
+                Publish(new WorldEvent
+                {
+                    Kind = EventKind.Noise,
+                    Position = npc.Position,
+                    TrueActorId = npc.Id,
+                    ObjectId = "",
+                    Loudness = 0.5f,
+                    Severity = 0f,
+                    LeavesEvidence = false,
+                    Description = npc.Name + " walks into something"
+                });
+                return;
+            }
+
+            // Knock it somewhere near, and leave evidence with his name on it.
+            // A history of Pip-shaped incidents is exactly what the player wants
+            // in the room's memory when their own sabotage is discovered.
+            victim.Position = new Vec3(
+                victim.Position.X + Rng.Range(-1.1f, 1.1f),
+                victim.Position.Y,
+                victim.Position.Z + Rng.Range(-1.1f, 1.1f));
+
+            npc.Say(Lines.Fumbles(npc), 2.5f);
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.ObjectTaken,
+                Position = victim.Position,
+                TrueActorId = npc.Id,
+                ObjectId = victim.Id,
+                Loudness = 0.45f,
+                Severity = 0.05f,
+                LeavesEvidence = true,
+                Description = npc.Name + " knocks " + victim.Name + " over"
+            });
+        }
+
         private void TickConfronting(Npc npc, float dt)
         {
             Npc other = World.GetNpc(npc.ConfrontTargetId);
@@ -993,10 +1252,16 @@ namespace AngryGuy.Core
             if (!blame.HasSuspect)
             {
                 npc.Say("How did that even happen?", 2.5f);
+                TryStartRepair(npc, obj);
                 return;
             }
 
             ApplyBlame(npc, blame, cause);
+
+            // Whoever they have decided to blame, the thing still needs sorting
+            // out - and the sort of person who sorts things out is the sort of
+            // person who ruins the player's afternoon.
+            TryStartRepair(npc, obj);
         }
 
         private void ApplyBlame(Npc npc, BlameResult blame, WorldEvent cause)
@@ -1596,14 +1861,33 @@ namespace AngryGuy.Core
 
             if (actorId == Player.Id)
             {
-                Feedback.Push(new FeedbackEvent
+                // Continuous pressure - standing somewhere you shouldn't - arrives
+                // a sliver at a time. Reporting every sliver buries the one-off
+                // events that actually need reacting to under a wall of "+1".
+                // Bank it instead and report a meaningful amount.
+                bool report = true;
+                if (continuous)
                 {
-                    Kind = FeedbackKind.Suspicion,
-                    ActorId = npc.Id,
-                    Amount = ToDisplay(applied),
-                    Text = reason,
-                    Time = Time
-                });
+                    npc.PendingSuspicionReport += applied;
+                    if (npc.PendingSuspicionReport < 0.05f) report = false;
+                    else
+                    {
+                        applied = npc.PendingSuspicionReport;
+                        npc.PendingSuspicionReport = 0f;
+                    }
+                }
+
+                if (report)
+                {
+                    Feedback.Push(new FeedbackEvent
+                    {
+                        Kind = FeedbackKind.Suspicion,
+                        ActorId = npc.Id,
+                        Amount = ToDisplay(applied),
+                        Text = reason,
+                        Time = Time
+                    });
+                }
 
                 SuspicionTier wasTier = Suspicion.TierFor(before);
                 SuspicionTier isTier = Suspicion.TierFor(after);

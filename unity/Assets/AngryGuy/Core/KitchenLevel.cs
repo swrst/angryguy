@@ -42,6 +42,8 @@ namespace AngryGuy.Core
             public const string Waiter = "waiter";
             public const string Dishwasher = "dishwasher";
             public const string Manager = "manager";
+            public const string SousChef = "souschef";
+            public const string Porter = "porter";
         }
 
         public static Simulation Build(int seed)
@@ -611,10 +613,29 @@ namespace AngryGuy.Core
                 Personality.Manager(), "floor");
             manager.MoveSpeed = 2.5f;
 
+            // Bruno is the level's clock. He cannot walk past a broken thing, so
+            // every trap the player sets is now a race: will Gordon get to the
+            // stove before Bruno gets to the knobs? Dealing with Bruno - keeping
+            // him busy, keeping him out, or timing around his rounds - is the
+            // first real tactical problem the player has.
+            Npc sous = MakeNpc(Ids.SousChef, "Bruno", "sous chef", new Vec3(-4.4f, 0f, 4.6f),
+                Personality.SousChef(), "kitchen");
+            sous.MoveSpeed = 2.8f;
+
+            // Pip is the level's alibi. He genuinely knocks things over, so the
+            // building has a history of unexplained incidents that had nothing to
+            // do with the player - and a credulous, low-status body for blame to
+            // land on when it does.
+            Npc porter = MakeNpc(Ids.Porter, "Pip", "kitchen porter", new Vec3(-8.2f, 0f, 3.2f),
+                Personality.Porter(), "washup");
+            porter.MoveSpeed = 3.0f;
+
             world.Add(chef);
             world.Add(waiter);
             world.Add(dish);
             world.Add(manager);
+            world.Add(sous);
+            world.Add(porter);
 
             // Habits: the signature behaviours that make each of them legible.
             // The player learns "Gordon is always back at that stove" and builds
@@ -635,16 +656,40 @@ namespace AngryGuy.Core
             manager.AddHabit(Ids.Radio, "turn_down", 1.8f);
             manager.AddHabit(Ids.Lights, "lights_on", 2.5f);
 
+            sous.AddHabit(Ids.Stove, "cook", 1.6f);
+            sous.AddHabit(Ids.Sink, "wash", 1.5f);
+            sous.AddHabit(Ids.Table, "wipe", 1.7f);
+            sous.AddHabit(Ids.Plant, "tidy_plant", 1.9f);
+
+            porter.AddHabit(Ids.Bin, "empty_bin", 2.0f);
+            porter.AddHabit(Ids.Fridge, "eat", 2.2f);
+            porter.AddHabit(Ids.Sink, "wash", 1.3f);
+            porter.AddHabit(Ids.Coffee, "coffee", 1.5f);
+
             // Seeded relationships. Gordon already half-blames Terry for everything,
             // which is exactly the crack the player can widen.
             chef.AddRelationship(Ids.Dishwasher, -0.45f);
             chef.AddRelationship(Ids.Waiter, 0.15f);
             chef.AddRelationship(Ids.Manager, -0.2f);
+            chef.AddRelationship(Ids.SousChef, 0.55f);
+            chef.AddRelationship(Ids.Porter, -0.35f);
 
             dish.AddRelationship(Ids.Chef, -0.3f);
             waiter.AddRelationship(Ids.Chef, 0.2f);
             waiter.AddRelationship(Ids.Dishwasher, 0.3f);
             manager.AddRelationship(Ids.Chef, 0.1f);
+
+            // Bruno is Gordon's man, and resents being the only one who tidies.
+            // Both of those are levers: turn Bruno against Gordon and the target
+            // loses his repair service and gains an enemy in the same move.
+            sous.AddRelationship(Ids.Chef, 0.6f);
+            sous.AddRelationship(Ids.Porter, -0.5f);
+            sous.AddRelationship(Ids.Dishwasher, -0.15f);
+
+            porter.AddRelationship(Ids.Chef, -0.2f);
+            porter.AddRelationship(Ids.SousChef, -0.3f);
+            porter.AddRelationship(Ids.Dishwasher, 0.45f);
+            manager.AddRelationship(Ids.Porter, -0.25f);
         }
 
         private static Npc MakeNpc(string id, string name, string role, Vec3 position,
