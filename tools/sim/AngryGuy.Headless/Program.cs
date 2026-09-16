@@ -257,6 +257,7 @@ namespace AngryGuy.Headless
                     case "look": PrintLook(); break;
                     case "who": PrintWho(); break;
                     case "log": PrintLog(); break;
+                    case "traps": case "setup": case "plans": PrintTraps(); break;
                     case "go": Go(arg); break;
                     case "use": Use(arg); break;
                     case "wait": Wait(arg); break;
@@ -315,6 +316,7 @@ namespace AngryGuy.Headless
             Console.WriteLine("  wait <sec>     stand still and let things happen");
             Console.WriteLine("  throw          lob whatever you are holding - noise lands over there");
             Console.WriteLine("  hide           duck into a hiding spot you are standing next to");
+            Console.WriteLine("  traps          what you've set up, and whether it's still armed");
             Console.WriteLine("  who            what every NPC is feeling and doing");
             Console.WriteLine("  log            recent events");
             Console.WriteLine("  quit");
@@ -418,6 +420,35 @@ namespace AngryGuy.Headless
                 : "  Being watched by: " + string.Join(", ", watchers.ToArray()));
         }
 
+        /// <summary>
+        /// What the player has set up. A sandbox about laying traps has to tell
+        /// you which of yours are still live - otherwise you spend the level
+        /// waiting on sabotage that was mopped up four minutes ago.
+        /// </summary>
+        private static void PrintTraps()
+        {
+            IReadOnlyList<Trap> traps = _sim.Traps.All;
+            if (traps.Count == 0)
+            {
+                Console.WriteLine("  You haven't set anything up yet.");
+                return;
+            }
+
+            Console.WriteLine("  What you've set up:");
+            for (int i = 0; i < traps.Count; i++)
+            {
+                Trap t = traps[i];
+                string waiting = t.WaitingForName.Length > 0 && !t.Sprung && !t.Defused
+                    ? "  waiting for " + t.WaitingForName
+                    : "";
+
+                Console.WriteLine(string.Format("   [{0,-7}] {1,-44} set {2,3:0}s ago{3}",
+                    t.StatusWord, t.Label, _sim.Time - t.SetAt, waiting));
+            }
+
+            Console.WriteLine("   " + _sim.Traps.ArmedCount + " still armed.");
+        }
+
         private static List<string> Watchers()
         {
             List<string> watchers = new List<string>();
@@ -465,9 +496,29 @@ namespace AngryGuy.Headless
             }
 
             Vec3 destination;
-            if (!Resolve(name, out destination))
+            string what;
+            List<string> ambiguous;
+
+            if (!Resolve(name, out destination, out what, out ambiguous))
             {
-                Console.WriteLine("  Can't find '" + name + "'.");
+                if (ambiguous.Count > 1)
+                {
+                    // One letter used to silently pick whichever object happened
+                    // to be first in the list, which turned navigation into
+                    // typing random letters and seeing where you ended up.
+                    Console.WriteLine("  Which one? " + string.Join(", ", ambiguous.ToArray()));
+                }
+                else
+                {
+                    Console.WriteLine("  Can't find '" + name + "'. Try 'map' for what's about.");
+                }
+                return;
+            }
+
+            if (Vec3.FlatDistance(destination, _sim.Player.Position) < 1.1f)
+            {
+                Console.WriteLine("  You're already at the " + what + ".");
+                PrintLook();
                 return;
             }
 
@@ -484,43 +535,116 @@ namespace AngryGuy.Headless
                 travelled += Dt;
             }
 
-            Console.WriteLine(string.Format("  You walk over. ({0:0.0}s)", travelled));
+            Console.WriteLine(string.Format("  You walk over to the {0}. ({1:0.0}s)", what, travelled));
             PrintLook();
         }
 
-        private static bool Resolve(string name, out Vec3 position)
+        /// <summary>
+        /// Turn what the player typed into somewhere to walk.
+        ///
+        /// Matching is layered: exact name, then whole-word prefix, then
+        /// substring. A vague needle that hits several things asks rather than
+        /// guessing, because silently picking the first match is how "go d"
+        /// ends up somewhere the player never intended and they lose the thread
+        /// of where they are.
+        /// </summary>
+        private static bool Resolve(string name, out Vec3 position, out string what,
+            out List<string> candidates)
         {
             position = Vec3.Zero;
-            string needle = name.ToLowerInvariant();
+            what = "";
+            candidates = new List<string>();
 
-            Zone zone = _sim.World.GetZone(needle);
-            if (zone != null)
+            string needle = name.Trim().ToLowerInvariant();
+            if (needle.Length == 0) return false;
+
+            List<string> names = new List<string>();
+            List<Vec3> spots = new List<Vec3>();
+
+            for (int i = 0; i < _sim.World.Zones.Count; i++)
             {
-                position = zone.Center;
-                return true;
+                Zone z = _sim.World.Zones[i];
+                names.Add(z.Name.Length > 0 ? z.Name : z.Id);
+                spots.Add(z.Center);
             }
 
             for (int i = 0; i < _sim.World.Objects.Count; i++)
             {
                 SmartObject o = _sim.World.Objects[i];
                 if (o.Concealed) continue;
-                if (o.Id.ToLowerInvariant().Contains(needle) || o.Name.ToLowerInvariant().Contains(needle))
-                {
-                    position = o.Position;
-                    return true;
-                }
+                names.Add(o.Name);
+                spots.Add(o.Position);
             }
 
             for (int i = 0; i < _sim.World.Npcs.Count; i++)
             {
-                Npc n = _sim.World.Npcs[i];
-                if (n.Id.ToLowerInvariant().Contains(needle) || n.Name.ToLowerInvariant().Contains(needle))
+                names.Add(_sim.World.Npcs[i].Name);
+                spots.Add(_sim.World.Npcs[i].Position);
+            }
+
+            // "exit" and "out" always mean the way out, whatever it is called.
+            if (needle == "exit" || needle == "out" || needle == "door out" || needle == "back door")
+            {
+                Zone exit = _sim.World.GetZone(_sim.ExitZoneId);
+                if (exit != null)
                 {
-                    position = n.Position;
+                    position = exit.Center;
+                    what = "back door";
                     return true;
                 }
             }
 
+            int exact = -1;
+            List<int> prefix = new List<int>();
+            List<int> loose = new List<int>();
+
+            for (int i = 0; i < names.Count; i++)
+            {
+                string hay = names[i].ToLowerInvariant();
+                if (hay == needle) { exact = i; break; }
+
+                bool wordPrefix = hay.StartsWith(needle);
+                if (!wordPrefix)
+                {
+                    string[] words = hay.Split(' ');
+                    for (int w = 0; w < words.Length; w++)
+                    {
+                        if (words[w].StartsWith(needle)) { wordPrefix = true; break; }
+                    }
+                }
+
+                if (wordPrefix) prefix.Add(i);
+                else if (hay.Contains(needle)) loose.Add(i);
+            }
+
+            if (exact >= 0)
+            {
+                position = spots[exact];
+                what = names[exact];
+                return true;
+            }
+
+            List<int> hits = prefix.Count > 0 ? prefix : loose;
+
+            // Several matches that are all the same place is not really ambiguous.
+            if (hits.Count > 1)
+            {
+                bool sameSpot = true;
+                for (int i = 1; i < hits.Count; i++)
+                {
+                    if (Vec3.FlatDistance(spots[hits[0]], spots[hits[i]]) > 1.4f) { sameSpot = false; break; }
+                }
+                if (sameSpot) hits = new List<int> { hits[0] };
+            }
+
+            if (hits.Count == 1)
+            {
+                position = spots[hits[0]];
+                what = names[hits[0]];
+                return true;
+            }
+
+            for (int i = 0; i < hits.Count && i < 8; i++) candidates.Add(names[hits[i]]);
             return false;
         }
 

@@ -686,6 +686,68 @@ namespace AngryGuy.Core
             });
         }
 
+        /// <summary>
+        /// Plant whatever you are carrying in somebody's patch.
+        ///
+        /// This is the verb the whole design was missing. Stealing the chef's pan
+        /// makes him angry at nobody in particular; leaving it in the
+        /// dishwasher's sink makes him angry at the dishwasher. The mechanism is
+        /// not a special case - the object is genuinely sitting in Terry's
+        /// workspace, Terry is genuinely always standing there, and the ordinary
+        /// blame logic draws the obvious wrong conclusion on its own.
+        ///
+        /// Cheap if nobody sees you, ruinous if they do, which is exactly the
+        /// risk curve the game wants.
+        /// </summary>
+        public static void AddPlantVerb(SmartObject station, string ownerName)
+        {
+            station.WithAffordance(new Affordance
+            {
+                Id = "plant",
+                Verb = "Plant what you're holding on",
+                Actors = ActorKind.Player,
+                IsSabotage = true,
+                Duration = 1.6f,
+                Incrimination = 0.65f,
+                Precondition = delegate(SmartObject o, Npc npc) { return npc == null; },
+                PlayerPrecondition = delegate(SmartObject o, Simulation sim)
+                {
+                    return sim.Player.IsCarrying && sim.Player.CarryingObjectId != o.Id;
+                },
+                Effect = delegate(AffordanceContext ctx)
+                {
+                    Simulation sim = ctx.Sim;
+                    SmartObject held = sim.World.GetObject(sim.Player.CarryingObjectId);
+                    if (held == null) return;
+
+                    held.HeldBy = "";
+                    held.Concealed = false;
+                    held.Position = new Vec3(
+                        ctx.Object.Position.X + 0.6f,
+                        ctx.Object.Position.Y,
+                        ctx.Object.Position.Z + 0.4f);
+                    sim.Player.CarryingObjectId = "";
+
+                    sim.Announce(FeedbackKind.Info,
+                        "The " + held.Name + " is now sitting in " + ownerName + "'s patch. "
+                        + "Let somebody find it.");
+
+                    sim.Publish(new WorldEvent
+                    {
+                        Kind = EventKind.ObjectTampered,
+                        Position = held.Position,
+                        TrueActorId = ctx.ActorId,
+                        ObjectId = held.Id,
+                        VictimId = held.OwnerId,
+                        Loudness = 0.15f,
+                        Severity = 0.5f,
+                        LeavesEvidence = true,
+                        Description = "the " + held.Name + " has turned up at the " + ctx.Object.Name
+                    });
+                }
+            });
+        }
+
         /// <summary>A generic "break it so it stops working" player verb.</summary>
         private static Affordance Break(string id, string verb, float incrimination, float noise,
             string description, float severity)

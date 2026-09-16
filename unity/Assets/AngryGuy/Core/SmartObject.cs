@@ -100,6 +100,13 @@ namespace AngryGuy.Core
         /// </summary>
         public Func<SmartObject, Npc, bool> ArrivalPrecondition;
 
+        /// <summary>
+        /// A precondition that needs to look at the player rather than at this
+        /// object - "am I carrying something", say. Only consulted when the
+        /// player is the actor; NPCs never see these affordances.
+        /// </summary>
+        public Func<SmartObject, Simulation, bool> PlayerPrecondition;
+
         /// <summary>What actually happens when the interaction completes.</summary>
         public Action<AffordanceContext> Effect;
 

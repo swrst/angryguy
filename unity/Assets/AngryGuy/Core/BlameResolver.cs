@@ -58,10 +58,16 @@ namespace AngryGuy.Core
             }
 
             // 2. Prior suspicion: this is how gossip and past incidents bite.
+            //
+            // Capped deliberately. Prior suspicion should decide WHO you look at
+            // first, not how sure you get. Uncapped it was a ratchet: suspicion
+            // fed the blame score, the blame score fed suspicion back, and a
+            // player at 0.65 hit certainty off an incident nobody witnessed.
             foreach (KeyValuePair<string, float> kv in detective.Suspicion)
             {
                 if (kv.Key == detective.Id || kv.Value <= 0.05f) continue;
-                Bump(scores, reasons, kv.Key, kv.Value * 0.5f, "already under suspicion");
+                Bump(scores, reasons, kv.Key, Mathx.Clamp(kv.Value, 0f, 0.6f) * 0.34f,
+                    "already under suspicion");
             }
 
             // 3. Motive: people I dislike are easier to blame.

@@ -89,6 +89,7 @@ namespace AngryGuy.UnityLayer
             }
 
             DrawObjectivePanel(sim);
+            DrawTrapPanel(sim);
             DrawWatchers(sim);
             DrawWorldLabels(sim);
             DrawPopups();
@@ -224,6 +225,59 @@ namespace AngryGuy.UnityLayer
                     _small);
                 GUI.color = Color.white;
             }
+        }
+
+        /// <summary>
+        /// Everything the player has set in motion that has not landed yet.
+        ///
+        /// Without this the player sets six traps and loses track of which ones
+        /// somebody has already quietly undone, so half the level is spent
+        /// waiting on sabotage that stopped existing minutes ago. Knowing what
+        /// is still armed is what makes the waiting a decision rather than a
+        /// guess.
+        /// </summary>
+        private void DrawTrapPanel(Simulation sim)
+        {
+            IReadOnlyList<Trap> traps = sim.Traps.All;
+            if (traps.Count == 0) return;
+
+            int shown = 0;
+            for (int i = traps.Count - 1; i >= 0 && shown < 6; i--)
+            {
+                if (traps[i].Sprung) continue;
+                shown++;
+            }
+            if (shown == 0) return;
+
+            float height = 30f + shown * 19f;
+            Rect panel = new Rect(14f, 192f, 330f, height);
+            Panel(panel);
+
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 6f, 310f, 20f),
+                "SET UP  (" + sim.Traps.ArmedCount + " armed)", _title);
+
+            float y = panel.y + 28f;
+            int drawn = 0;
+
+            for (int i = traps.Count - 1; i >= 0 && drawn < 6; i--)
+            {
+                Trap trap = traps[i];
+                if (trap.Sprung) continue;
+
+                GUI.color = trap.Defused
+                    ? new Color(0.55f, 0.55f, 0.58f)
+                    : new Color(0.95f, 0.82f, 0.45f);
+
+                string line = trap.Defused
+                    ? trap.Label + " - undone"
+                    : trap.Label + (trap.WaitingForName.Length > 0 ? "  (" + trap.WaitingForName + ")" : "");
+
+                GUI.Label(new Rect(panel.x + 12f, y, 310f, 18f), line, _small);
+                y += 19f;
+                drawn++;
+            }
+
+            GUI.color = Color.white;
         }
 
         private string MostSuspicious(Simulation sim)

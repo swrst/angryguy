@@ -108,6 +108,9 @@ namespace AngryGuy.Core
         /// <summary>Stops a diligent NPC re-fixing the same thing in a loop.</summary>
         public readonly Dictionary<string, float> RepairCooldown = new Dictionary<string, float>();
 
+        /// <summary>Owned things they have already gone and fetched the owner for.</summary>
+        public readonly HashSet<string> ToldOwnerAbout = new HashSet<string>();
+
         /// <summary>Time until this NPC can fumble something again.</summary>
         public float FumbleCooldown;
 

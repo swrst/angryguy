@@ -306,7 +306,7 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.AddState(StateKeys.Contents, -1f);
-                    Restock(ctx.Sim, ctx.Object, 3f, 70f, "a delivery arrives");
+                    Restock(ctx.Sim, ctx.Object, 6f, 45f, "a delivery arrives");
                 }
             });
 
@@ -502,7 +502,7 @@ namespace AngryGuy.Core
                 Effect = delegate(AffordanceContext ctx)
                 {
                     ctx.Object.AddState(StateKeys.Contents, -1f);
-                    Restock(ctx.Sim, ctx.Object, 6f, 90f, "someone refills the water tank");
+                    Restock(ctx.Sim, ctx.Object, 10f, 50f, "someone refills the water tank");
                 }
             });
 
@@ -613,6 +613,17 @@ namespace AngryGuy.Core
                 Personality.Manager(), "floor");
             manager.MoveSpeed = 2.5f;
 
+            // Somewhere to frame each of them. Planting the chef's pan in the
+            // dishwasher's sink is the cleanest sabotage in the game: Gordon's
+            // property turns up in Terry's patch, Terry is always standing
+            // there, and the blame logic reaches the obvious wrong conclusion
+            // with no help from us.
+            AddPlantTarget(world, Ids.Sink, "Terry");
+            AddPlantTarget(world, Ids.Desk, "Eva");
+            AddPlantTarget(world, Ids.Stove, "Gordon");
+            AddPlantTarget(world, Ids.Coffee, "Marie");
+            AddPlantTarget(world, Ids.Locker, "whoever's locker that is");
+
             // Bruno is the level's clock. He cannot walk past a broken thing, so
             // every trap the player sets is now a race: will Gordon get to the
             // stove before Bruno gets to the knobs? Dealing with Bruno - keeping
@@ -690,6 +701,12 @@ namespace AngryGuy.Core
             porter.AddRelationship(Ids.SousChef, -0.3f);
             porter.AddRelationship(Ids.Dishwasher, 0.45f);
             manager.AddRelationship(Ids.Porter, -0.25f);
+        }
+
+        private static void AddPlantTarget(World world, string objectId, string ownerName)
+        {
+            SmartObject station = world.GetObject(objectId);
+            if (station != null) ItemCatalogue.AddPlantVerb(station, ownerName);
         }
 
         private static Npc MakeNpc(string id, string name, string role, Vec3 position,

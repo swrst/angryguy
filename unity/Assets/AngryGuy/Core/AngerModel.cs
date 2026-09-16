@@ -125,12 +125,22 @@ namespace AngryGuy.Core
             npc.Tension = Mathx.Clamp01(npc.Tension - 0.004f * dt);
 
             // Suspicion fades too, otherwise one unlucky glance ends the level.
-            float suspicionDecay = Mathx.Lerp(0.016f, 0.0035f, npc.Personality.Grudge) * dt;
+            //
+            // But it fades at a rate that depends on how much of it there is. A
+            // passing "hm, odd" is forgotten in under a minute; a settled belief
+            // that you are up to something barely shifts. The flat rate this
+            // replaced let a player walk away from being half-caught and be back
+            // to zero inside forty seconds, which made suspicion something to
+            // wait out rather than a resource to spend.
+            float baseRate = Mathx.Lerp(0.0075f, 0.0016f, npc.Personality.Grudge);
+
             string[] keys = new string[npc.Suspicion.Count];
             npc.Suspicion.Keys.CopyTo(keys, 0);
             for (int i = 0; i < keys.Length; i++)
             {
-                npc.Suspicion[keys[i]] = Mathx.Clamp01(npc.Suspicion[keys[i]] - suspicionDecay);
+                float held = npc.Suspicion[keys[i]];
+                float stickiness = Mathx.Lerp(1.5f, 0.22f, held);
+                npc.Suspicion[keys[i]] = Mathx.Clamp01(held - baseRate * stickiness * dt);
             }
         }
     }

@@ -60,9 +60,16 @@ namespace AngryGuy.Tests
             Test("Public failure is worse than private failure", AudienceMakesItWorse);
 
             Test("A diligent NPC undoes sabotage he finds", TheFixerFixesThings);
+            Test("The fixer fetches the owner before touching their things", FixerFetchesTheOwnerFirst);
             Test("The fixer notes a problem but finishes his task first", FixerFinishesFirst);
             Test("Subtle tampering survives being tidied up", SubtleTamperSurvivesRepair);
             Test("A clumsy NPC creates anomalies but no anger", ClumsinessIsHarmless);
+
+            Test("Sabotage is tracked, and stops being armed when undone", TrapsAreTracked);
+            Test("Clearing up your own ruined kitchen is infuriating", ResentfulChoreAngers);
+            Test("Prior suspicion alone can never finish the run", SuspicionRatchetIsCapped);
+            Test("Real suspicion sticks; a passing glance fades", SuspicionStickiness);
+            Test("Planting stolen goods redirects the blame", PlantingFramesSomeone);
 
             Test("Same seed produces the same run", RunDeterminism);
 
@@ -751,35 +758,61 @@ namespace AngryGuy.Tests
         {
             Simulation sim = KitchenLevel.Build(404);
             Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
-            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+            SmartObject bucket = sim.World.GetObject(KitchenLevel.Ids.Bucket);
 
             // Get everyone else out of the way so this is unambiguously Bruno.
             ParkEveryoneExcept(sim, bruno);
 
-            stove.SetState(StateKeys.Broken, 1f);
-            bruno.Position = new Vec3(stove.Position.X + 1.5f, 0f, stove.Position.Z);
+            bucket.SetState(StateKeys.Broken, 1f);
+            bruno.Position = new Vec3(bucket.Position.X + 1.5f, 0f, bucket.Position.Z);
 
-            AssertTrue(sim.TryStartRepair(bruno, stove), "an idle fixer should take the job");
+            AssertTrue(sim.TryStartRepair(bruno, bucket), "an idle fixer should take the job");
 
             RunFor(sim, 25f);
 
-            AssertTrue(stove.GetState(StateKeys.Broken) <= 0f,
-                "Bruno should have the stove working again");
+            AssertTrue(bucket.GetState(StateKeys.Broken) <= 0f,
+                "Bruno should have sorted the bucket out");
+        }
+
+        /// <summary>
+        /// Bruno will not quietly fix the head chef's stove behind his back - he
+        /// fetches him. Which is worse for the player than a repair: the target
+        /// ends up standing in front of the sabotage a minute early.
+        /// </summary>
+        private static void FixerFetchesTheOwnerFirst()
+        {
+            Simulation sim = KitchenLevel.Build(408);
+            Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+
+            stove.SetState(StateKeys.Broken, 1f);
+            bruno.Position = new Vec3(stove.Position.X + 1.5f, 0f, stove.Position.Z);
+
+            AssertTrue(!sim.TryStartRepair(bruno, stove),
+                "he doesn't touch Gordon's stove without telling him");
+            AssertTrue(chef.Activity == NpcActivity.Investigating,
+                "but Gordon is now on his way over to look at it");
+
+            // Once he has passed it on, tidying up is fair game.
+            RunFor(sim, 20f);
+            AssertTrue(sim.TryStartRepair(bruno, stove) || stove.GetState(StateKeys.Broken) <= 0f,
+                "and after that he will sort it out himself");
         }
 
         private static void FixerFinishesFirst()
         {
             Simulation sim = KitchenLevel.Build(405);
             Npc bruno = sim.World.GetNpc(KitchenLevel.Ids.SousChef);
-            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+            SmartObject bucket = sim.World.GetObject(KitchenLevel.Ids.Bucket);
 
-            stove.SetState(StateKeys.Broken, 1f);
+            bucket.SetState(StateKeys.Broken, 1f);
             bruno.Activity = NpcActivity.Using;
             bruno.ActivityTimer = 20f;
 
-            AssertTrue(!sim.TryStartRepair(bruno, stove),
+            AssertTrue(!sim.TryStartRepair(bruno, bucket),
                 "he should not down tools the instant he sees a problem");
-            AssertTrue(bruno.PendingRepairId == stove.Id,
+            AssertTrue(bruno.PendingRepairId == bucket.Id,
                 "but he should remember it for when he is free");
         }
 
@@ -798,6 +831,9 @@ namespace AngryGuy.Tests
             salt.SetState(StateKeys.Subtle, 1f);
             salt.Position = new Vec3(salt.HomePosition.X + 3f, 0f, salt.HomePosition.Z + 1f);
             bruno.Position = new Vec3(salt.Position.X + 1f, 0f, salt.Position.Z);
+
+            // Past the point where he would defer to Gordon about it.
+            bruno.ToldOwnerAbout.Add(salt.Id);
 
             AssertTrue(sim.TryStartRepair(bruno, salt), "an out-of-place shaker is a job");
 
@@ -833,9 +869,136 @@ namespace AngryGuy.Tests
             for (int i = 0; i < sim.World.Npcs.Count; i++)
             {
                 Npc npc = sim.World.Npcs[i];
-                if (npc == keep) continue;
+                if (keep != null && npc == keep) continue;
                 npc.Position = new Vec3(60f + i * 3f, 0f, 60f);
             }
+        }
+
+        // ------------------------------------------------------------------
+        // Traps, blame and the suspicion economy
+        // ------------------------------------------------------------------
+
+        private static void TrapsAreTracked()
+        {
+            Simulation sim = KitchenLevel.Build(501);
+            SmartObject stove = sim.World.GetObject(KitchenLevel.Ids.Stove);
+
+            sim.Player.Position = stove.Position;
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Stove, "break_stove"),
+                "the player should be able to break the stove standing at it");
+
+            AssertTrue(sim.Traps.ArmedCount == 1, "breaking the stove is one armed trap");
+            AssertTrue(sim.Traps.All[0].WaitingForName == "Gordon",
+                "and the game knows whose routine walks into it");
+
+            // Somebody repairs it. The trap must stop claiming to be live.
+            stove.SetState(StateKeys.Broken, 0f);
+            sim.Traps.Refresh(sim.World);
+
+            AssertTrue(sim.Traps.ArmedCount == 0, "a repaired stove is not an armed trap");
+            AssertTrue(sim.Traps.All[0].Defused, "and it should read as undone");
+        }
+
+        private static void ResentfulChoreAngers()
+        {
+            Simulation sim = KitchenLevel.Build(502);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+
+            // A spill in Gordon's own kitchen. Mopping it must not leave him
+            // calmer than he started - the player's sabotage cannot be a favour.
+            Vec3 where = new Vec3(-5.5f, 0f, 2f);
+            ItemCatalogue.Spill(sim, where, PlayerAvatar.PlayerId, "oil");
+            chef.Position = where;
+
+            float before = chef.Anger;
+            RunFor(sim, 60f);
+
+            AssertTrue(chef.Anger > before,
+                "clearing up someone else's mess in his own kitchen should cost him (" +
+                before + " -> " + chef.Anger + ")");
+        }
+
+        private static void SuspicionRatchetIsCapped()
+        {
+            Simulation sim = KitchenLevel.Build(503);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+
+            // Park her right on the edge, then let her draw conclusions off
+            // nothing but her own existing suspicion, over and over.
+            eva.Suspicion[PlayerAvatar.PlayerId] = 0.9f;
+
+            BlameResult blame = new BlameResult
+            {
+                SuspectId = PlayerAvatar.PlayerId,
+                Confidence = 1f,
+                Reason = "already under suspicion"
+            };
+
+            for (int i = 0; i < 12; i++)
+            {
+                sim.RaiseSuspicion(eva, PlayerAvatar.PlayerId,
+                    blame.Confidence * 0.45f * 0.3f, blame.Reason);
+            }
+
+            AssertTrue(sim.Outcome == GameOutcome.InProgress,
+                "a hunch with no new evidence must never be what ends the run");
+        }
+
+        private static void SuspicionStickiness()
+        {
+            Simulation sim = KitchenLevel.Build(504);
+            Npc a = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+            Npc b = sim.World.GetNpc(KitchenLevel.Ids.Waiter);
+
+            a.Suspicion["x"] = 0.70f;
+            b.Suspicion["x"] = 0.12f;
+
+            for (int i = 0; i < 600; i++) AngerModel.Decay(a, 0.1f);
+            for (int i = 0; i < 600; i++) AngerModel.Decay(b, 0.1f);
+
+            AssertTrue(b.SuspicionOf("x") <= 0.001f,
+                "a passing glance should be gone after a minute (" + b.SuspicionOf("x") + ")");
+            AssertTrue(a.SuspicionOf("x") > 0.4f,
+                "a settled belief should not simply be waited out (" + a.SuspicionOf("x") + ")");
+        }
+
+        private static void PlantingFramesSomeone()
+        {
+            Simulation sim = KitchenLevel.Build(505);
+            SmartObject pan = sim.World.GetObject(KitchenLevel.Ids.Pan);
+            SmartObject sink = sim.World.GetObject(KitchenLevel.Ids.Sink);
+            Npc chef = sim.World.GetNpc(KitchenLevel.Ids.Chef);
+            Npc terry = sim.World.GetNpc(KitchenLevel.Ids.Dishwasher);
+
+            // Do the whole job unobserved - the point of framing someone is that
+            // it only works when nobody watched you do it.
+            ParkEveryoneExcept(sim, null);
+
+            sim.Player.Position = pan.Position;
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Pan, "take"), "pick up the pan");
+
+            sim.Player.Position = sink.Position;
+            AssertTrue(sim.PlayerInteract(KitchenLevel.Ids.Sink, "plant"),
+                "plant it in Terry's sink");
+
+            AssertTrue(Vec3.FlatDistance(pan.Position, sink.Position) < 1.5f,
+                "the pan should now be sitting in the sink");
+            AssertTrue(chef.SuspicionOf(PlayerAvatar.PlayerId) < 0.05f,
+                "nobody saw it, so nobody suspects the player");
+
+            // Now Terry is at his sink, as he always is, and Gordon walks in.
+            terry.Position = sink.Position;
+            chef.Position = new Vec3(sink.Position.X + 1.2f, 0f, sink.Position.Z);
+            chef.Facing = (sink.Position - chef.Position).Normalized;
+            chef.Memory.RecordSighting(terry.Id, sink.Position, sim.Time, 0f);
+
+            sim.Player.Position = new Vec3(70f, 0f, 70f);
+            sim.InvestigateObject(chef, pan);
+            RunFor(sim, 8f);
+
+            AssertTrue(chef.SuspicionOf(terry.Id) > chef.SuspicionOf(PlayerAvatar.PlayerId),
+                "Gordon should be looking at Terry, not at you (Terry " +
+                chef.SuspicionOf(terry.Id) + " vs you " + chef.SuspicionOf(PlayerAvatar.PlayerId) + ")");
         }
 
         private static void Schadenfreude()

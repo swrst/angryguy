@@ -54,6 +54,9 @@ namespace AngryGuy.Core
         /// </summary>
         public readonly FeedbackQueue Feedback = new FeedbackQueue();
 
+        /// <summary>What the player has set up and not yet seen pay off.</summary>
+        public readonly TrapBoard Traps = new TrapBoard();
+
         private readonly List<PlayerAction> _playerActions = new List<PlayerAction>();
 
         /// <summary>
@@ -120,6 +123,8 @@ namespace AngryGuy.Core
             }
 
             TickSocialProximity(dt);
+            TickTraps();
+            TickAlarm();
 
             // The building calms down if nothing else happens.
             Unease = Mathx.Clamp01(Unease - 0.006f * dt);
@@ -130,6 +135,55 @@ namespace AngryGuy.Core
             {
                 Outcome = GameOutcome.TimeUp;
                 Log("Time is up.");
+            }
+        }
+
+        /// <summary>
+        /// Re-check the player's outstanding sabotage and tell them the moment a
+        /// trap stops being a trap. A plan that quietly died is worse than one
+        /// that failed loudly: the player keeps waiting on it.
+        /// </summary>
+        /// <summary>
+        /// The alarm is a window, and a window the player cannot see the end of
+        /// is a trap rather than a tool. Warn them before it shuts.
+        /// </summary>
+        private void TickAlarm()
+        {
+            if (AlarmUntil < 0f) return;
+
+            if (AlarmRinging)
+            {
+                if (_alarmWarned || AlarmUntil - Time > 12f) return;
+                _alarmWarned = true;
+                Announce(FeedbackKind.Alert, "The alarm is winding down - people will be back any second");
+                return;
+            }
+
+            if (_alarmOver) return;
+            _alarmOver = true;
+            Announce(FeedbackKind.Info, "False alarm, apparently. Everyone's coming back in.");
+        }
+
+        private bool _alarmWarned;
+        private bool _alarmOver;
+
+        private void TickTraps()
+        {
+            IReadOnlyList<Trap> traps = Traps.All;
+
+            bool[] wasLive = new bool[traps.Count];
+            for (int i = 0; i < traps.Count; i++)
+            {
+                wasLive[i] = !traps[i].Sprung && !traps[i].Defused;
+            }
+
+            Traps.Refresh(World);
+
+            for (int i = 0; i < traps.Count; i++)
+            {
+                if (!wasLive[i] || !traps[i].Defused) continue;
+                Announce(FeedbackKind.Alert,
+                    "Your work on the " + traps[i].ObjectName + " has been undone", "");
             }
         }
 
@@ -357,7 +411,9 @@ namespace AngryGuy.Core
         public void TriggerAlarm(float seconds)
         {
             AlarmUntil = Time + seconds;
-            Announce(FeedbackKind.Alert, "FIRE ALARM - everyone is heading outside");
+            _alarmWarned = false;
+            Announce(FeedbackKind.Alert, string.Format(
+                "FIRE ALARM - the kitchen is yours for about {0:0} seconds", seconds));
 
             for (int i = 0; i < World.Npcs.Count; i++)
             {
@@ -637,12 +693,32 @@ namespace AngryGuy.Core
                 });
             }
 
-            // A satisfied NPC calms down slightly. Success is the counterweight
-            // the player is working against.
-            npc.Anger = Mathx.Clamp01(npc.Anger - 0.012f);
-            npc.Mind.Satisfaction(npc.Personality);
+            // Clearing up someone else's mess in your own kitchen is not a
+            // success, it is an indignity. Without this a hot-headed chef is
+            // soothed by the player's sabotage - he mops the spill, his Order
+            // need is met, and he ends up calmer than before it happened.
+            bool resentfulChore = plan.Target.HasTag(Tags.Mess)
+                                  && npc.Personality.Territoriality > 0.5f
+                                  && InOwnPatch(npc, plan.Target.Position);
 
-            if (npc.Mind.Pride > 0.5f && Rng.Chance(0.25f)) npc.Say(Lines.Proud(npc), 2.5f);
+            if (resentfulChore)
+            {
+                AngerModel.Add(npc,
+                    0.035f * Mathx.Lerp(0.5f, 1.8f, npc.Personality.Temper)
+                           * Mathx.Lerp(0.6f, 1.5f, npc.Personality.Territoriality),
+                    this, "had to clear up " + plan.Target.Name);
+                npc.Mind.Misfortune(0.25f, npc.Personality);
+                npc.Say(Lines.ResentfulChore(npc, plan.Target), 3f);
+            }
+            else
+            {
+                // A satisfied NPC calms down slightly. Success is the counterweight
+                // the player is working against.
+                npc.Anger = Mathx.Clamp01(npc.Anger - 0.012f);
+                npc.Mind.Satisfaction(npc.Personality);
+
+                if (npc.Mind.Pride > 0.5f && Rng.Chance(0.25f)) npc.Say(Lines.Proud(npc), 2.5f);
+            }
 
             npc.CurrentPlan = null;
             npc.Activity = NpcActivity.Idle;
@@ -655,6 +731,7 @@ namespace AngryGuy.Core
             AngerModel.Add(npc, amount, this, "couldn't " + plan.Describe());
 
             npc.AvoidUntil[plan.Target.Id] = Time + 32f;
+            Traps.NoteSprung(plan.Target.Id);
             ReactToMisfortune(npc, 0.45f, plan.Target.Position, plan.Target.Name);
 
             Publish(new WorldEvent
@@ -741,6 +818,37 @@ namespace AngryGuy.Core
 
             float until;
             if (npc.RepairCooldown.TryGetValue(obj.Id, out until) && until > Time) return false;
+
+            // You do not go poking about in the head chef's stove behind his
+            // back. Somebody who respects the owner fetches them first, and only
+            // tidies up afterwards.
+            //
+            // This one rule is what keeps Bruno interesting. Fixing everything
+            // on sight made him a wall the player's best sabotage quietly died
+            // against; deferring on everything made him toothless. Fetching the
+            // owner does both jobs at once - it puts the target in front of the
+            // sabotage sooner, and Bruno still clears it up a few seconds later,
+            // so the player has to keep working rather than set one trap and
+            // wait.
+            if (obj.OwnerId.Length > 0 && obj.OwnerId != npc.Id
+                && npc.RelationshipWith(obj.OwnerId) > 0.2f
+                && !npc.ToldOwnerAbout.Contains(obj.Id))
+            {
+                Npc owner = World.GetNpc(obj.OwnerId);
+                if (owner != null)
+                {
+                    npc.ToldOwnerAbout.Add(obj.Id);
+                    npc.RepairCooldown[obj.Id] = Time + 14f;
+                    npc.Say("That's " + owner.Name + "'s. " + owner.Name + "! You'll want to see this.", 4f);
+
+                    // Send them over to look regardless of whether there is a
+                    // tidy evidence trail. Being fetched is the point; what they
+                    // make of it when they get there is the blame system's job.
+                    StartInvestigation(owner, obj.Position, "Bruno wants me for something");
+                    InvestigateObject(owner, obj);
+                    return false;
+                }
+            }
 
             // Mid-task, he notes it and carries on. Sabotage lands in the gap
             // between him seeing the problem and him being free to deal with it,
@@ -866,6 +974,7 @@ namespace AngryGuy.Core
             });
 
             Announce(FeedbackKind.Alert, npc.Name + " has undone your work on " + what, npc.Id);
+            Traps.Refresh(World);
         }
 
         // ------------------------------------------------------------------
@@ -1160,6 +1269,7 @@ namespace AngryGuy.Core
 
                 // Going over in front of the whole kitchen is the single funniest
                 // thing in the game, and by far the most humiliating.
+                Traps.NoteSprung(obj.Id);
                 ReactToMisfortune(npc, 0.85f, npc.Position, obj.Name);
 
                 Publish(new WorldEvent
@@ -1288,6 +1398,14 @@ namespace AngryGuy.Core
                 npc.AbandonPlan();
                 npc.Activity = NpcActivity.Confronting;
             }
+        }
+
+        /// <summary>Is this somewhere this NPC thinks of as their own ground?</summary>
+        public bool InOwnPatch(Npc npc, Vec3 where)
+        {
+            if (npc.HomeZoneId.Length == 0) return false;
+            Zone home = World.GetZone(npc.HomeZoneId);
+            return home != null && home.Contains(where);
         }
 
         private void StartInvestigation(Npc npc, Vec3 point, string why)
@@ -1509,6 +1627,7 @@ namespace AngryGuy.Core
                 {
                     Affordance aff = obj.Affordances[a];
                     if (!aff.AvailableFor(obj, null)) continue;
+                    if (aff.PlayerPrecondition != null && !aff.PlayerPrecondition(obj, this)) continue;
                     options.Add(new InteractionOption
                     {
                         Object = obj,
@@ -1518,14 +1637,32 @@ namespace AngryGuy.Core
                 }
             }
 
-            options.Sort((x, y) => x.Distance.CompareTo(y.Distance));
+            // Sabotage first, then ordinary verbs, then the carry chores. With
+            // a full pocket and a locker nearby the interesting options were
+            // being pushed to number seven behind "put down the salt shaker".
+            options.Sort(delegate(InteractionOption x, InteractionOption y)
+            {
+                int rank = OptionRank(x).CompareTo(OptionRank(y));
+                if (rank != 0) return rank;
+                return x.Distance.CompareTo(y.Distance);
+            });
             return options;
+        }
+
+        private static int OptionRank(InteractionOption option)
+        {
+            string id = option.Affordance.Id;
+            if (id == "throw" || id == "drop") return 2;
+            if (id.StartsWith("wear_")) return 2;
+            return option.Affordance.IsSabotage ? 0 : 1;
         }
 
         public bool PlayerInteract(InteractionOption option)
         {
             if (option == null || Outcome != GameOutcome.InProgress) return false;
             if (!option.Affordance.AvailableFor(option.Object, null)) return false;
+            if (option.Affordance.PlayerPrecondition != null
+                && !option.Affordance.PlayerPrecondition(option.Object, this)) return false;
 
             AffordanceContext ctx = new AffordanceContext
             {
@@ -1537,7 +1674,18 @@ namespace AngryGuy.Core
 
             bool witnessed = AnyoneWatchingPlayer();
 
+            // Snapshot the object so we can work out what this sabotage actually
+            // changed, and therefore whether it is still in place later on.
+            Dictionary<string, float> before = null;
+            Vec3 wasAt = option.Object.Position;
+            if (option.Affordance.IsSabotage)
+            {
+                before = new Dictionary<string, float>(option.Object.State);
+            }
+
             if (option.Affordance.Effect != null) option.Affordance.Effect(ctx);
+
+            if (option.Affordance.IsSabotage) RecordTrap(option, before, wasAt);
 
             _playerActions.Add(new PlayerAction
             {
@@ -1566,6 +1714,57 @@ namespace AngryGuy.Core
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Work out what a sabotage left behind, so the player can be told later
+        /// whether it is still waiting to go off.
+        /// </summary>
+        private void RecordTrap(InteractionOption option, Dictionary<string, float> before, Vec3 wasAt)
+        {
+            SmartObject obj = option.Object;
+
+            Trap trap = new Trap
+            {
+                ObjectId = obj.Id,
+                ObjectName = obj.Name,
+                Label = option.Label,
+                SetAt = Time,
+                MovedIt = Vec3.FlatDistance(obj.Position, wasAt) > 1.2f
+                          || obj.HeldBy.Length > 0
+                          || obj.Concealed
+            };
+
+            trap.MovedTo = obj.Position;
+
+            foreach (KeyValuePair<string, float> kv in obj.State)
+            {
+                float was;
+                if (before.TryGetValue(kv.Key, out was) && System.Math.Abs(was - kv.Value) < 0.01f) continue;
+                trap.Signature[kv.Key] = kv.Value;
+            }
+
+            // Whose routine walks into this? That is the whole point of the trap,
+            // and the player should not have to remember it.
+            float bestWeight = 0f;
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                Npc npc = World.Npcs[i];
+                foreach (KeyValuePair<string, float> habit in npc.Habits)
+                {
+                    if (!habit.Key.StartsWith(obj.Id + ":")) continue;
+                    if (habit.Value <= bestWeight) continue;
+                    bestWeight = habit.Value;
+                    trap.WaitingForName = npc.Name;
+                }
+            }
+
+            if (trap.WaitingForName.Length == 0 && obj.OwnerId.Length > 0)
+            {
+                trap.WaitingForName = DisplayName(obj.OwnerId);
+            }
+
+            Traps.Add(trap);
         }
 
         public bool PlayerInteract(string objectId, string affordanceId)
@@ -1842,10 +2041,33 @@ namespace AngryGuy.Core
         /// applied to a trickle it quarters every tick and decay eats the rest,
         /// so a continuous source would silently do nothing at all.
         /// </summary>
+        /// <summary>Reasons that are a hunch rather than an observation.</summary>
+        private static bool IsInference(string reason)
+        {
+            return reason == "already under suspicion"
+                   || reason == "never liked them anyway"
+                   || reason == "a hunch";
+        }
+
         public void RaiseSuspicion(Npc npc, string actorId, float amount, string reason,
             bool continuous = false)
         {
             if (amount <= 0f || actorId.Length == 0) return;
+
+            // Concluding it was probably you on the grounds that it usually is
+            // is not the same as seeing you do it. An inference drawn from
+            // nothing but prior suspicion or dislike moves the needle a little,
+            // but it must never be the thing that ends the run: otherwise the
+            // player loses to a feedback loop rather than to a mistake. Getting
+            // caught always takes fresh evidence.
+            if (IsInference(reason))
+            {
+                amount *= 0.3f;
+                float ceiling = CaughtThreshold - 0.05f;
+                float held = npc.SuspicionOf(actorId);
+                if (held + amount > ceiling) amount = Mathx.Clamp(ceiling - held, 0f, 1f);
+                if (amount <= 0f) return;
+            }
 
             if (actorId == Player.Id && !continuous)
             {

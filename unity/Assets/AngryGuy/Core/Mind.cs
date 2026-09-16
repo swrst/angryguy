@@ -233,6 +233,14 @@ namespace AngryGuy.Core
             return "I'll deal with the " + obj.Name + ".";
         }
 
+        public static string ResentfulChore(Npc npc, SmartObject obj)
+        {
+            if (npc.Mind.SuspectsSabotage) return "I am not the cleaner. Somebody is taking the mick.";
+            if (npc.Personality.Temper > 0.8f) return "Why am I mopping. WHY am I mopping.";
+            if (npc.Anger > 0.5f) return "Second time today I've had to do this.";
+            return "Who leaves this for someone else to find?";
+        }
+
         public static string WorkingOnIt(Npc npc, SmartObject obj)
         {
             if (obj.IsBroken) return "Right, this is going to take me a minute.";
