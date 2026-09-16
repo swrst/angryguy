@@ -437,6 +437,13 @@ namespace UnityEngine
 
 namespace UnityEngine.Rendering
 {
+    public class RenderPipelineAsset : Object { }
+
+    public static class GraphicsSettings
+    {
+        public static RenderPipelineAsset currentRenderPipeline { get { return null; } }
+    }
+
     public enum AmbientMode { Skybox, Trilight, Flat, Custom }
 
     public enum DefaultReflectionMode { Skybox, Custom }
