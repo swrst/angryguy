@@ -5,18 +5,33 @@ using UnityEngine;
 namespace AngryGuy.UnityLayer
 {
     /// <summary>
-    /// IMGUI heads-up display. Deliberately not uGUI: OnGUI needs no canvas, no
-    /// prefabs, no fonts and no scene setup, so the prototype has zero asset
-    /// dependencies. Replace with uGUI/UI Toolkit once the design settles.
+    /// Everything the player reads.
+    ///
+    /// The prototype's blocking problem was not the simulation, it was that none
+    /// of it surfaced: no numbers, no names, no cause and effect. This draws the
+    /// two meters that matter, labels every NPC with what they are doing and how
+    /// suspicious they are, floats the exact anger and suspicion each action
+    /// caused over the person it happened to, and ends the level by showing the
+    /// player what they actually did.
+    ///
+    /// Still IMGUI: no canvas, no prefabs, no font assets, no scene setup.
+    /// Replace with uGUI once the design stops moving.
     /// </summary>
     public sealed class GameHud : MonoBehaviour
     {
         private SimRunner _runner;
         private GUIStyle _label;
         private GUIStyle _small;
+        private GUIStyle _tiny;
         private GUIStyle _title;
-        private GUIStyle _centred;
+        private GUIStyle _huge;
         private bool _showDebug;
+        private bool _showControls = true;
+
+        private static readonly Color AngerLow = new Color(0.35f, 0.72f, 0.42f);
+        private static readonly Color AngerHigh = new Color(0.95f, 0.22f, 0.16f);
+        private static readonly Color SuspicionLow = new Color(0.35f, 0.55f, 0.85f);
+        private static readonly Color SuspicionHigh = new Color(1f, 0.5f, 0.1f);
 
         private void Awake()
         {
@@ -26,6 +41,7 @@ namespace AngryGuy.UnityLayer
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.Tab)) _showDebug = !_showDebug;
+            if (Input.GetKeyDown(KeyCode.H)) _showControls = !_showControls;
 
             if (_runner != null && _runner.Sim != null &&
                 _runner.Sim.Outcome != GameOutcome.InProgress)
@@ -42,123 +58,142 @@ namespace AngryGuy.UnityLayer
             _label = new GUIStyle(GUI.skin.label);
             _label.fontSize = 14;
             _label.normal.textColor = Color.white;
+            _label.wordWrap = true;
 
             _small = new GUIStyle(_label);
-            _small.fontSize = 11;
-            _small.normal.textColor = new Color(0.82f, 0.82f, 0.86f);
+            _small.fontSize = 12;
+
+            _tiny = new GUIStyle(_label);
+            _tiny.fontSize = 10;
 
             _title = new GUIStyle(_label);
             _title.fontSize = 18;
             _title.fontStyle = FontStyle.Bold;
 
-            _centred = new GUIStyle(_title);
-            _centred.alignment = TextAnchor.MiddleCenter;
-            _centred.fontSize = 26;
+            _huge = new GUIStyle(_title);
+            _huge.fontSize = 30;
+            _huge.alignment = TextAnchor.MiddleCenter;
         }
 
         private void OnGUI()
         {
             if (_runner == null || _runner.Sim == null) return;
-
             EnsureStyles();
 
             Simulation sim = _runner.Sim;
-            HudSnapshot hud = sim.BuildHud();
 
-            DrawObjectivePanel(hud);
-            DrawInteractionPanel();
-            DrawFeed(hud);
+            DrawObjectivePanel(sim);
+            DrawWatchers(sim);
             DrawWorldLabels(sim);
-
+            DrawPopups();
+            DrawPrompt(sim);
+            DrawToasts();
+            if (_showControls) DrawControls();
             if (_showDebug) DrawDebugPanel(sim);
-            if (hud.Outcome != GameOutcome.InProgress) DrawOutcome(hud);
+            if (sim.Outcome != GameOutcome.InProgress) DrawOutcome(sim);
         }
 
         // ------------------------------------------------------------------
 
-        private void DrawObjectivePanel(HudSnapshot hud)
+        private void DrawObjectivePanel(Simulation sim)
         {
-            GUI.Box(new Rect(12f, 12f, 300f, 132f), GUIContent.none);
+            Npc target = sim.Target;
+            if (target == null) return;
 
-            GUI.Label(new Rect(24f, 18f, 280f, 24f), "Target: " + hud.TargetName, _title);
+            Rect panel = new Rect(14f, 14f, 330f, 150f);
+            Panel(panel);
 
-            GUI.Label(new Rect(24f, 46f, 280f, 18f), "Anger", _small);
-            Bar(new Rect(24f, 64f, 268f, 14f), hud.TargetAnger,
-                new Color(0.35f, 0.7f, 0.4f), new Color(0.9f, 0.2f, 0.15f));
-            Marker(new Rect(24f, 64f, 268f, 14f), hud.TargetPeakAnger);
-            Marker(new Rect(24f, 64f, 268f, 14f), Simulation.AngerWinThreshold, new Color(1f, 1f, 1f, 0.55f));
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 8f, 310f, 24f),
+                "MAKE " + target.Name.ToUpperInvariant() + " FURIOUS", _title);
 
-            string suspicionLabel = hud.HighestSuspicionBy.Length > 0
-                ? "Suspicion (" + hud.HighestSuspicionBy + ")"
-                : "Suspicion";
-            GUI.Label(new Rect(24f, 82f, 280f, 18f), suspicionLabel, _small);
-            Bar(new Rect(24f, 100f, 268f, 14f), hud.HighestSuspicion,
-                new Color(0.3f, 0.5f, 0.8f), new Color(0.95f, 0.55f, 0.1f));
+            // Anger, with the current value, the best reached, and the bar to clear.
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 36f, 200f, 18f),
+                "Anger  " + Simulation.ToDisplay(target.Anger) + " / 100", _small);
 
-            string status = hud.ObjectiveMet
-                ? "He's lost it. Get to the back door."
-                : string.Format("{0:0}s left", hud.TimeRemaining);
-            GUI.Label(new Rect(24f, 118f, 280f, 18f), status, _small);
-        }
+            Rect angerBar = new Rect(panel.x + 12f, panel.y + 56f, 306f, 16f);
+            Bar(angerBar, target.Anger, AngerLow, AngerHigh);
+            Marker(angerBar, target.PeakAnger, new Color(1f, 1f, 1f, 0.75f));
+            Marker(angerBar, Simulation.AngerWinThreshold, new Color(0.4f, 1f, 0.55f, 0.95f));
 
-        private void DrawInteractionPanel()
-        {
-            IReadOnlyList<InteractionOption> options = _runner.Interactions;
+            float highest = _runner.HighestSuspicion();
+            string who = MostSuspicious(sim);
+            SuspicionTier tier = Suspicion.TierFor(highest);
 
-            if (_runner.Channelling != null)
-            {
-                float duration = Mathf.Max(0.35f, _runner.Channelling.Affordance.Duration);
-                float t = Mathf.Clamp01(_runner.ChannelProgress / duration);
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 78f, 310f, 18f),
+                who.Length > 0
+                    ? "Suspicion  " + Simulation.ToDisplay(highest) + "  (" + who + ": " + Suspicion.Describe(tier) + ")"
+                    : "Suspicion  0  (nobody has noticed you)",
+                _small);
 
-                float width = 320f;
-                Rect box = new Rect((Screen.width - width) * 0.5f, Screen.height - 120f, width, 54f);
-                GUI.Box(box, GUIContent.none);
-                GUI.Label(new Rect(box.x + 12f, box.y + 8f, width - 24f, 20f),
-                    _runner.Channelling.Label + "...", _label);
-                Bar(new Rect(box.x + 12f, box.y + 30f, width - 24f, 12f), t,
-                    new Color(0.8f, 0.7f, 0.2f), new Color(0.4f, 0.85f, 0.45f));
-                return;
-            }
+            Rect suspicionBar = new Rect(panel.x + 12f, panel.y + 98f, 306f, 16f);
+            Bar(suspicionBar, highest, SuspicionLow, SuspicionHigh);
+            Marker(suspicionBar, Simulation.BlownCoverThreshold, new Color(1f, 0.85f, 0.2f, 0.9f));
 
-            if (options.Count == 0) return;
+            string status = sim.ObjectiveMet
+                ? "DONE - now get out the back door"
+                : Mathf.RoundToInt(Mathf.Max(0f, sim.TimeLimit - sim.Time)) + "s left";
 
-            float panelHeight = 26f + options.Count * 20f;
-            Rect panel = new Rect(Screen.width - 332f, Screen.height - panelHeight - 16f, 320f, panelHeight);
-            GUI.Box(panel, GUIContent.none);
-
-            GUI.Label(new Rect(panel.x + 12f, panel.y + 4f, 300f, 18f), "Within reach", _small);
-
-            for (int i = 0; i < options.Count && i < 9; i++)
-            {
-                InteractionOption option = options[i];
-
-                GUI.color = option.IsSabotage ? new Color(1f, 0.65f, 0.4f) : Color.white;
-                GUI.Label(new Rect(panel.x + 12f, panel.y + 22f + i * 20f, 300f, 18f),
-                    "[" + (i + 1) + "] " + option.Label, _label);
-                GUI.color = Color.white;
-            }
-        }
-
-        private void DrawFeed(HudSnapshot hud)
-        {
-            int count = Mathf.Min(6, hud.Feed.Count);
-            if (count == 0) return;
-
-            float height = 12f + count * 17f;
-            Rect panel = new Rect(12f, Screen.height - height - 16f, 430f, height);
-            GUI.Box(panel, GUIContent.none);
-
-            for (int i = 0; i < count; i++)
-            {
-                string line = hud.Feed[hud.Feed.Count - count + i];
-                GUI.color = new Color(1f, 1f, 1f, 0.45f + 0.55f * ((i + 1f) / count));
-                GUI.Label(new Rect(panel.x + 10f, panel.y + 6f + i * 17f, panel.width - 20f, 16f),
-                    line, _small);
-            }
+            GUI.color = sim.ObjectiveMet ? new Color(0.45f, 1f, 0.6f) : Color.white;
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 120f, 310f, 20f), status, _small);
             GUI.color = Color.white;
         }
 
-        /// <summary>Names, moods and speech drawn over each NPC in screen space.</summary>
+        private string MostSuspicious(Simulation sim)
+        {
+            string who = "";
+            float highest = 0f;
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                float s = sim.World.Npcs[i].SuspicionOf(PlayerAvatar.PlayerId);
+                if (s > highest)
+                {
+                    highest = s;
+                    who = sim.World.Npcs[i].Name;
+                }
+            }
+            return who;
+        }
+
+        /// <summary>
+        /// The single most important readout in a stealth game: am I being
+        /// looked at right now?
+        /// </summary>
+        private void DrawWatchers(Simulation sim)
+        {
+            if (sim.Player.IsHidden)
+            {
+                Banner("HIDDEN - press F to come out", new Color(0.45f, 0.85f, 1f));
+                return;
+            }
+
+            List<Npc> watchers = sim.WatchersOfPlayer();
+            if (watchers.Count == 0) return;
+
+            string names = "";
+            for (int i = 0; i < watchers.Count; i++)
+            {
+                if (i > 0) names += ", ";
+                names += watchers[i].Name;
+            }
+
+            Banner(names + " can see you", new Color(1f, 0.72f, 0.25f));
+        }
+
+        private void Banner(string text, Color colour)
+        {
+            float width = 420f;
+            Rect rect = new Rect((Screen.width - width) * 0.5f, 18f, width, 26f);
+            GUI.color = new Color(0f, 0f, 0f, 0.55f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = colour;
+            GUIStyle centred = new GUIStyle(_label);
+            centred.alignment = TextAnchor.MiddleCenter;
+            GUI.Label(rect, text, centred);
+            GUI.color = Color.white;
+        }
+
+        // ------------------------------------------------------------------
+
         private void DrawWorldLabels(Simulation sim)
         {
             Camera camera = _runner.Player != null ? _runner.Player.Camera : Camera.main;
@@ -168,101 +203,297 @@ namespace AngryGuy.UnityLayer
             {
                 Npc npc = sim.World.Npcs[i];
 
-                Vector3 world = LevelView.ToUnity(npc.Position) + Vector3.up * 2.1f;
+                Vector3 world = LevelView.ToUnity(npc.Position) + Vector3.up * 2.15f;
                 Vector3 screen = camera.WorldToScreenPoint(world);
                 if (screen.z <= 0f) continue;
 
-                float x = screen.x - 100f;
+                float x = screen.x - 120f;
                 float y = Screen.height - screen.y;
 
-                GUI.color = npc.IsTarget ? new Color(1f, 0.9f, 0.5f) : Color.white;
-                GUI.Label(new Rect(x, y, 200f, 18f),
-                    npc.Name + " - " + npc.MoodWord, Centered(_small));
+                GUIStyle centred = new GUIStyle(_small);
+                centred.alignment = TextAnchor.MiddleCenter;
+
+                // Glyph: the at-a-glance "this one has noticed something".
+                if (npc.StatusGlyph.Length > 0)
+                {
+                    GUIStyle glyph = new GUIStyle(_title);
+                    glyph.alignment = TextAnchor.MiddleCenter;
+                    GUI.color = npc.Anger >= 0.85f ? new Color(1f, 0.3f, 0.25f) : new Color(1f, 0.85f, 0.3f);
+                    GUI.Label(new Rect(x, y - 40f, 240f, 22f), npc.StatusGlyph, glyph);
+                }
+
+                GUI.color = npc.IsTarget ? new Color(1f, 0.88f, 0.45f) : new Color(0.92f, 0.92f, 0.95f);
+                GUI.Label(new Rect(x, y - 18f, 240f, 18f),
+                    npc.Name + (npc.IsTarget ? "  [TARGET]" : ""), centred);
+
+                GUI.color = AngerTint(npc.Anger);
+                GUI.Label(new Rect(x, y, 240f, 16f),
+                    npc.MoodWord + " - " + npc.StatusLabel, Centred(_tiny));
+
+                float suspicion = npc.SuspicionOf(PlayerAvatar.PlayerId);
+                if (suspicion > 0.05f)
+                {
+                    GUI.color = Color.Lerp(SuspicionLow, SuspicionHigh, suspicion);
+                    GUI.Label(new Rect(x, y + 14f, 240f, 16f),
+                        "suspects you " + Simulation.ToDisplay(suspicion), Centred(_tiny));
+                }
 
                 if (npc.Speech.Length > 0)
                 {
-                    GUI.color = new Color(1f, 1f, 1f, 0.92f);
-                    GUI.Label(new Rect(x - 40f, y - 18f, 280f, 18f), "\"" + npc.Speech + "\"",
-                        Centered(_small));
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(x - 40f, y - 60f, 320f, 20f),
+                        "\"" + npc.Speech + "\"", Centred(_small));
                 }
 
                 GUI.color = Color.white;
             }
         }
 
-        private GUIStyle Centered(GUIStyle source)
+        private void DrawPopups()
+        {
+            Camera camera = _runner.Player != null ? _runner.Player.Camera : Camera.main;
+            if (camera == null) return;
+
+            GUIStyle style = new GUIStyle(_label);
+            style.alignment = TextAnchor.MiddleCenter;
+            style.fontStyle = FontStyle.Bold;
+
+            for (int i = 0; i < _runner.Popups.Count; i++)
+            {
+                Popup popup = _runner.Popups[i];
+
+                Vector3 screen = camera.WorldToScreenPoint(popup.World);
+                if (screen.z <= 0f) continue;
+
+                float fade = 1f - Mathf.Clamp01(popup.Age / popup.Life);
+                GUI.color = new Color(popup.Colour.r, popup.Colour.g, popup.Colour.b, fade);
+                GUI.Label(new Rect(screen.x - 100f, Screen.height - screen.y - 30f, 200f, 22f),
+                    popup.Text, style);
+            }
+
+            GUI.color = Color.white;
+        }
+
+        // ------------------------------------------------------------------
+
+        private void DrawPrompt(Simulation sim)
+        {
+            if (_runner.Channelling != null)
+            {
+                float duration = Mathf.Max(0.35f, _runner.Channelling.Affordance.Duration);
+                float t = Mathf.Clamp01(_runner.ChannelProgress / duration);
+
+                float width = 340f;
+                Rect box = new Rect((Screen.width - width) * 0.5f, Screen.height - 150f, width, 56f);
+                Panel(box);
+
+                GUI.Label(new Rect(box.x + 12f, box.y + 8f, width - 24f, 20f),
+                    _runner.Channelling.Label + "...", Centred(_label));
+                Bar(new Rect(box.x + 12f, box.y + 32f, width - 24f, 12f), t,
+                    new Color(0.85f, 0.7f, 0.2f), new Color(0.4f, 0.9f, 0.5f));
+                return;
+            }
+
+            List<InteractionOption> options = _runner.FocusedOptions();
+            if (options.Count == 0) return;
+
+            float panelWidth = 400f;
+            float height = 30f + options.Count * 20f;
+            Rect panel = new Rect((Screen.width - panelWidth) * 0.5f, Screen.height - height - 118f,
+                panelWidth, height);
+            Panel(panel);
+
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 6f, panelWidth - 24f, 18f),
+                options[0].Object.Name, _small);
+
+            for (int i = 0; i < options.Count && i < 9; i++)
+            {
+                InteractionOption option = options[i];
+                GUI.color = option.IsSabotage ? new Color(1f, 0.62f, 0.35f) : Color.white;
+
+                string key = i == 0 ? "[E]" : "[" + (i + 1) + "]";
+                GUI.Label(new Rect(panel.x + 12f, panel.y + 26f + i * 20f, panelWidth - 24f, 18f),
+                    key + "  " + option.Label + (option.IsSabotage ? "   (sabotage)" : ""), _label);
+            }
+
+            GUI.color = Color.white;
+        }
+
+        private void DrawToasts()
+        {
+            int count = _runner.Toasts.Count;
+            if (count == 0) return;
+
+            float width = 560f;
+            for (int i = 0; i < count; i++)
+            {
+                Toast toast = _runner.Toasts[i];
+                float fade = Mathf.Clamp01(Mathf.Min(toast.Age * 3f, (toast.Life - toast.Age) * 2f));
+
+                Rect rect = new Rect((Screen.width - width) * 0.5f,
+                    Screen.height - 92f + (i - count + 1) * 22f, width, 20f);
+
+                GUI.color = new Color(toast.Colour.r, toast.Colour.g, toast.Colour.b, fade);
+                GUI.Label(rect, toast.Text, Centred(_small));
+            }
+
+            GUI.color = Color.white;
+        }
+
+        private void DrawControls()
+        {
+            string[] lines =
+            {
+                "WASD move     SHIFT sneak     V camera",
+                "E / 1-9 interact     Q cancel",
+                "T throw held item     F hide",
+                "TAB debug     H hide this"
+            };
+
+            float width = 250f;
+            Rect panel = new Rect(Screen.width - width - 14f, Screen.height - 96f, width, 82f);
+            Panel(panel);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                GUI.Label(new Rect(panel.x + 10f, panel.y + 6f + i * 18f, width - 20f, 16f),
+                    lines[i], _tiny);
+            }
+        }
+
+        private void DrawDebugPanel(Simulation sim)
+        {
+            float width = 440f;
+            float height = 44f + sim.World.Npcs.Count * 54f;
+            Rect panel = new Rect(Screen.width - width - 14f, 14f, width, height);
+            Panel(panel);
+
+            GUI.Label(new Rect(panel.x + 12f, panel.y + 8f, width - 24f, 20f),
+                "AI debug   t=" + Mathf.RoundToInt(sim.Time) + "s   seed " + _runner.Seed
+                + "   pending traps: " + sim.Pending.Count, _small);
+
+            for (int i = 0; i < sim.World.Npcs.Count; i++)
+            {
+                Npc npc = sim.World.Npcs[i];
+                float y = panel.y + 34f + i * 54f;
+
+                GUI.Label(new Rect(panel.x + 12f, y, width - 24f, 18f),
+                    npc.Name + " (" + npc.Role + ")  " + npc.Activity + " - " + npc.StatusLabel, _tiny);
+
+                GUI.Label(new Rect(panel.x + 12f, y + 16f, width - 24f, 18f),
+                    string.Format("anger {0}  tension {1}  suspects you {2}  failed plans {3}",
+                        Simulation.ToDisplay(npc.Anger), Simulation.ToDisplay(npc.Tension),
+                        Simulation.ToDisplay(npc.SuspicionOf(PlayerAvatar.PlayerId)), npc.FrustrationCount),
+                    _tiny);
+
+                GUI.Label(new Rect(panel.x + 12f, y + 32f, width - 24f, 18f),
+                    "needs " + npc.Needs + "   wants " + npc.Needs.MostUrgent(), _tiny);
+            }
+        }
+
+        // ------------------------------------------------------------------
+
+        private void DrawOutcome(Simulation sim)
+        {
+            GUI.color = new Color(0f, 0f, 0f, 0.8f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            string headline;
+            string detail;
+            Color tint;
+
+            switch (sim.Outcome)
+            {
+                case GameOutcome.Won:
+                    headline = "CLEAN GETAWAY";
+                    detail = (sim.Target != null ? sim.Target.Name : "The target")
+                             + " is beside himself and hasn't the faintest idea it was you.";
+                    tint = new Color(0.5f, 1f, 0.6f);
+                    break;
+                case GameOutcome.Caught:
+                    headline = "RUMBLED";
+                    detail = "Somebody worked out exactly what you were doing.";
+                    tint = new Color(1f, 0.45f, 0.35f);
+                    break;
+                default:
+                    headline = "SERVICE OVER";
+                    detail = "Everyone went home only mildly irritated.";
+                    tint = new Color(0.8f, 0.8f, 0.85f);
+                    break;
+            }
+
+            float top = Screen.height * 0.16f;
+
+            GUI.color = tint;
+            GUI.Label(new Rect(0f, top, Screen.width, 44f), headline, _huge);
+            GUI.color = Color.white;
+            GUI.Label(new Rect(0f, top + 46f, Screen.width, 24f), detail, Centred(_label));
+
+            // "How did you do that" - the recap that teaches players what worked.
+            float width = 620f;
+            Rect panel = new Rect((Screen.width - width) * 0.5f, top + 86f, width,
+                70f + Mathf.Min(sim.PlayerActions.Count, 12) * 20f);
+            Panel(panel);
+
+            GUI.Label(new Rect(panel.x + 16f, panel.y + 10f, width - 32f, 20f), "What you did", _title);
+
+            int shown = Mathf.Min(sim.PlayerActions.Count, 12);
+            int start = sim.PlayerActions.Count - shown;
+
+            for (int i = 0; i < shown; i++)
+            {
+                PlayerAction action = sim.PlayerActions[start + i];
+                GUI.color = action.Sabotage ? new Color(1f, 0.68f, 0.4f) : new Color(0.85f, 0.87f, 0.92f);
+                GUI.Label(new Rect(panel.x + 16f, panel.y + 36f + i * 20f, width - 32f, 18f),
+                    string.Format("{0,4:0}s   {1}{2}",
+                        action.Time, action.Label, action.Witnessed ? "   (someone saw you)" : ""),
+                    _small);
+            }
+
+            GUI.color = Color.white;
+
+            Npc target = sim.Target;
+            string summary = string.Format(
+                "Peak anger {0}    highest suspicion {1}    {2} actions in {3}s",
+                target != null ? Simulation.ToDisplay(target.PeakAnger) : 0,
+                Simulation.ToDisplay(_runner.HighestSuspicion()),
+                sim.PlayerActions.Count,
+                Mathf.RoundToInt(sim.Time));
+
+            GUI.Label(new Rect(panel.x, panel.y + panel.height - 26f, width, 20f),
+                summary, Centred(_small));
+
+            GUI.Label(new Rect(0f, panel.y + panel.height + 14f, Screen.width, 22f),
+                "R - new restaurant     T - same seed again", Centred(_small));
+        }
+
+        // ------------------------------------------------------------------
+
+        private GUIStyle Centred(GUIStyle source)
         {
             GUIStyle style = new GUIStyle(source);
             style.alignment = TextAnchor.MiddleCenter;
             return style;
         }
 
-        private void DrawDebugPanel(Simulation sim)
+        private static void Panel(Rect rect)
         {
-            float width = 430f;
-            float height = 40f + sim.World.Npcs.Count * 52f;
-            Rect panel = new Rect(Screen.width - width - 12f, 12f, width, height);
-            GUI.Box(panel, GUIContent.none);
-
-            GUI.Label(new Rect(panel.x + 12f, panel.y + 8f, width - 24f, 20f),
-                "AI debug (Tab)   t=" + Mathf.RoundToInt(sim.Time) + "s   seed " + _runner.Seed, _small);
-
-            for (int i = 0; i < sim.World.Npcs.Count; i++)
-            {
-                Npc npc = sim.World.Npcs[i];
-                float y = panel.y + 32f + i * 52f;
-
-                GUI.Label(new Rect(panel.x + 12f, y, width - 24f, 18f),
-                    string.Format("{0} ({1})  {2}", npc.Name, npc.Role,
-                        npc.Activity + (npc.CurrentPlan != null ? ": " + npc.CurrentPlan.Describe() : "")),
-                    _small);
-
-                GUI.Label(new Rect(panel.x + 12f, y + 16f, width - 24f, 18f),
-                    string.Format("anger {0:0.00}  tension {1:0.00}  suspects you {2:0.00}  fails {3}",
-                        npc.Anger, npc.Tension, npc.SuspicionOf(PlayerAvatar.PlayerId), npc.FrustrationCount),
-                    _small);
-
-                GUI.Label(new Rect(panel.x + 12f, y + 32f, width - 24f, 18f),
-                    "needs " + npc.Needs + "   wants: " + npc.Needs.MostUrgent(), _small);
-            }
-        }
-
-        private void DrawOutcome(HudSnapshot hud)
-        {
-            GUI.color = new Color(0f, 0f, 0f, 0.72f);
-            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = new Color(0.05f, 0.06f, 0.08f, 0.82f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = Color.white;
-
-            string headline;
-            string detail;
-
-            switch (hud.Outcome)
-            {
-                case GameOutcome.Won:
-                    headline = "CLEAN GETAWAY";
-                    detail = hud.TargetName + " is beside himself and hasn't the faintest idea it was you.";
-                    break;
-                case GameOutcome.Caught:
-                    headline = "RUMBLED";
-                    detail = "Somebody worked out exactly what you were doing.";
-                    break;
-                default:
-                    headline = "SERVICE OVER";
-                    detail = "Everyone went home only mildly irritated.";
-                    break;
-            }
-
-            GUI.Label(new Rect(0f, Screen.height * 0.4f, Screen.width, 40f), headline, _centred);
-            GUI.Label(new Rect(0f, Screen.height * 0.4f + 42f, Screen.width, 24f), detail, Centered(_label));
-            GUI.Label(new Rect(0f, Screen.height * 0.4f + 76f, Screen.width, 24f),
-                "R - new restaurant     T - same seed again", Centered(_small));
         }
 
-        // ------------------------------------------------------------------
+        private static Color AngerTint(float anger)
+        {
+            return anger < 0.5f
+                ? Color.Lerp(new Color(0.75f, 0.85f, 0.78f), new Color(1f, 0.85f, 0.35f), anger / 0.5f)
+                : Color.Lerp(new Color(1f, 0.85f, 0.35f), new Color(1f, 0.35f, 0.3f), (anger - 0.5f) / 0.5f);
+        }
 
         private static void Bar(Rect rect, float value, Color low, Color high)
         {
-            GUI.color = new Color(0f, 0f, 0f, 0.55f);
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
 
             GUI.color = Color.Lerp(low, high, Mathf.Clamp01(value));
@@ -272,18 +503,13 @@ namespace AngryGuy.UnityLayer
             GUI.color = Color.white;
         }
 
-        private static void Marker(Rect rect, float value)
-        {
-            Marker(rect, value, new Color(1f, 1f, 1f, 0.8f));
-        }
-
         private static void Marker(Rect rect, float value, Color colour)
         {
             if (value <= 0f) return;
 
             GUI.color = colour;
-            GUI.DrawTexture(new Rect(rect.x + rect.width * Mathf.Clamp01(value) - 1f, rect.y, 2f, rect.height),
-                Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(rect.x + rect.width * Mathf.Clamp01(value) - 1f, rect.y - 2f, 2f,
+                rect.height + 4f), Texture2D.whiteTexture);
             GUI.color = Color.white;
         }
     }

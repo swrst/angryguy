@@ -248,6 +248,12 @@ namespace AngryGuy.Core
 
         /// <summary>Something an NPC can slip on or trip over.</summary>
         public const string Hazard = "hazard";
+
+        /// <summary>Somewhere the player can tuck themselves out of sight.</summary>
+        public const string Hiding = "hiding";
+
+        /// <summary>A door: blocks sight and movement while shut.</summary>
+        public const string Door = "door";
     }
 
     /// <summary>State-bag key vocabulary.</summary>

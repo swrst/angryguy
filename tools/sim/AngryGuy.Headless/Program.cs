@@ -103,6 +103,7 @@ namespace AngryGuy.Headless
                     timeUse[key] = existing + Dt;
                 }
 
+                FlushFeedback();
                 while (printed < _sim.Feed.Count)
                 {
                     Console.WriteLine("  " + _sim.Feed[printed]);
@@ -161,6 +162,7 @@ namespace AngryGuy.Headless
             {
                 _sim.Tick(Dt);
 
+                FlushFeedback();
                 while (printed < _sim.Feed.Count)
                 {
                     Console.WriteLine("  " + _sim.Feed[printed]);
@@ -230,6 +232,8 @@ namespace AngryGuy.Headless
                     case "use": Use(arg); break;
                     case "wait": Wait(arg); break;
                     case "exit": Go("exit"); break;
+                    case "throw": Throw(); break;
+                    case "hide": Hide(); break;
                     case "quit": return 0;
                     default:
                         Console.WriteLine("  ? try 'help'");
@@ -280,6 +284,8 @@ namespace AngryGuy.Headless
             Console.WriteLine("  use <n>        do interaction n from the last 'look'");
             Console.WriteLine("  go <name>      walk to an object, npc or zone (e.g. 'go salt', 'go exit')");
             Console.WriteLine("  wait <sec>     stand still and let things happen");
+            Console.WriteLine("  throw          lob whatever you are holding - noise lands over there");
+            Console.WriteLine("  hide           duck into a hiding spot you are standing next to");
             Console.WriteLine("  who            what every NPC is feeling and doing");
             Console.WriteLine("  log            recent events");
             Console.WriteLine("  quit");
@@ -523,6 +529,51 @@ namespace AngryGuy.Headless
             _lastLook = _sim.GetPlayerInteractions();
         }
 
+        private static void Throw()
+        {
+            if (!_sim.PlayerThrow()) Console.WriteLine("  Your hands are empty.");
+            Step(0.6f);
+        }
+
+        private static void Hide()
+        {
+            if (_sim.Player.IsHidden)
+            {
+                _sim.PlayerToggleHide(null);
+                Step(0.5f);
+                return;
+            }
+
+            SmartObject nearest = null;
+            float best = float.MaxValue;
+            for (int i = 0; i < _sim.World.Objects.Count; i++)
+            {
+                SmartObject o = _sim.World.Objects[i];
+                if (!o.HasTag(Tags.Hiding)) continue;
+                float d = Vec3.FlatDistance(o.Position, _sim.Player.Position);
+                if (d < best) { best = d; nearest = o; }
+            }
+
+            if (nearest == null || best > 2.2f)
+            {
+                Console.WriteLine("  Nothing to hide in here.");
+                return;
+            }
+
+            _sim.PlayerToggleHide(nearest);
+            Step(0.5f);
+        }
+
+        private static void Step(float seconds)
+        {
+            int steps = (int)(seconds / Dt);
+            for (int i = 0; i < steps && _sim.Outcome == GameOutcome.InProgress; i++)
+            {
+                _sim.MovePlayer(Vec3.Zero, false, Dt);
+                _sim.Tick(Dt);
+            }
+        }
+
         private static void Wait(string arg)
         {
             float seconds;
@@ -544,11 +595,47 @@ namespace AngryGuy.Headless
 
         private static int FlushFeed(int shown)
         {
+            FlushFeedback();
+
             for (int i = shown; i < _sim.Feed.Count; i++)
             {
                 Console.WriteLine("   . " + _sim.Feed[i]);
             }
             return _sim.Feed.Count;
+        }
+
+        /// <summary>
+        /// Prints the same feedback stream the Unity HUD turns into floating
+        /// numbers and toasts. Keeping both front-ends on one queue is how the
+        /// terminal build stays useful for judging whether the game reads well.
+        /// </summary>
+        private static void FlushFeedback()
+        {
+            List<FeedbackEvent> events = _sim.Feedback.Drain();
+            for (int i = 0; i < events.Count; i++)
+            {
+                FeedbackEvent e = events[i];
+                string who = e.ActorId.Length > 0 ? _sim.DisplayName(e.ActorId) : "";
+
+                switch (e.Kind)
+                {
+                    case FeedbackKind.Anger:
+                        Console.WriteLine("   >> " + who + "  +" + e.Amount + " ANGER  (" + e.Text + ")");
+                        break;
+                    case FeedbackKind.Suspicion:
+                        Console.WriteLine("   !! " + who + "  +" + e.Amount + " SUSPICION  (" + e.Text + ")");
+                        break;
+                    case FeedbackKind.Alert:
+                        Console.WriteLine("   ** " + e.Text);
+                        break;
+                    case FeedbackKind.Objective:
+                        Console.WriteLine("   ## " + e.Text);
+                        break;
+                    default:
+                        Console.WriteLine("   -- " + e.Text);
+                        break;
+                }
+            }
         }
     }
 }

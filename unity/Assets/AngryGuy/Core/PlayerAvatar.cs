@@ -25,6 +25,21 @@ namespace AngryGuy.Core
         /// <summary>Object currently carried, empty if hands are free.</summary>
         public string CarryingObjectId = "";
 
+        /// <summary>
+        /// Hiding spot the player is tucked into. While set, NPCs cannot see
+        /// them at all - but they cannot move or reach anything either, so it is
+        /// a real decision rather than a free win.
+        /// </summary>
+        public string HidingInObjectId = "";
+
+        public bool IsHidden
+        {
+            get { return HidingInObjectId.Length > 0; }
+        }
+
+        /// <summary>How far the player can throw a held object.</summary>
+        public float ThrowRange = 7f;
+
         /// <summary>Noise generated this moment by moving. Sneaking is near-silent.</summary>
         public float MovementNoise;
 
@@ -49,6 +64,8 @@ namespace AngryGuy.Core
                     if (carried.OwnerId.Length > 0) guilt += 0.2f;
                 }
             }
+            // Sneaking is quieter and harder to spot, but creeping about is
+            // exactly what a guilty person looks like if you are seen anyway.
             if (Sneaking) guilt += 0.15f;
             return Mathx.Clamp01(guilt);
         }

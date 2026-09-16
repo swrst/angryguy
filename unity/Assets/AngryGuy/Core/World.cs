@@ -31,9 +31,25 @@ namespace AngryGuy.Core
         }
     }
 
+    /// <summary>
+    /// A door: a wall segment that only blocks while it is shut. Doors are what
+    /// turn a fixed floorplan into something the player can reshape.
+    /// </summary>
+    public sealed class DoorBlocker
+    {
+        public Wall Segment;
+        public SmartObject Object;
+
+        public bool IsClosed
+        {
+            get { return Object != null && Object.GetState("open") <= 0f; }
+        }
+    }
+
     public sealed class World
     {
         public readonly List<SmartObject> Objects = new List<SmartObject>();
+        public readonly List<DoorBlocker> Doors = new List<DoorBlocker>();
         public readonly List<Npc> Npcs = new List<Npc>();
         public readonly List<Wall> Walls = new List<Wall>();
         public readonly List<Zone> Zones = new List<Zone>();
@@ -91,14 +107,34 @@ namespace AngryGuy.Core
             return result;
         }
 
-        /// <summary>Straight-line visibility on the XZ plane, blocked by walls.</summary>
+        /// <summary>Straight-line visibility on the XZ plane, blocked by walls and shut doors.</summary>
         public bool HasLineOfSight(Vec3 from, Vec3 to)
         {
             for (int i = 0; i < Walls.Count; i++)
             {
                 if (SegmentsIntersect(from, to, Walls[i].A, Walls[i].B)) return false;
             }
+
+            for (int i = 0; i < Doors.Count; i++)
+            {
+                DoorBlocker door = Doors[i];
+                if (!door.IsClosed) continue;
+                if (SegmentsIntersect(from, to, door.Segment.A, door.Segment.B)) return false;
+            }
+
             return true;
+        }
+
+        /// <summary>The shut door standing between two points, if there is one.</summary>
+        public SmartObject BlockingDoor(Vec3 from, Vec3 to)
+        {
+            for (int i = 0; i < Doors.Count; i++)
+            {
+                DoorBlocker door = Doors[i];
+                if (!door.IsClosed) continue;
+                if (SegmentsIntersect(from, to, door.Segment.A, door.Segment.B)) return door.Object;
+            }
+            return null;
         }
 
         public Vec3 Clamp(Vec3 p)

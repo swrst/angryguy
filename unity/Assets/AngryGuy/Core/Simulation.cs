@@ -48,6 +48,19 @@ namespace AngryGuy.Core
         private readonly List<string> _feed = new List<string>();
         private const int FeedCapacity = 64;
 
+        /// <summary>
+        /// Player-facing feedback, drained by whatever is presenting the game.
+        /// Everything the player needs to understand goes through here.
+        /// </summary>
+        public readonly FeedbackQueue Feedback = new FeedbackQueue();
+
+        private readonly List<PlayerAction> _playerActions = new List<PlayerAction>();
+
+        public IReadOnlyList<PlayerAction> PlayerActions
+        {
+            get { return _playerActions; }
+        }
+
         public IReadOnlyList<string> Feed
         {
             get { return _feed; }
@@ -255,6 +268,24 @@ namespace AngryGuy.Core
 
         private void TickWalking(Npc npc, float dt)
         {
+            // Without this, a shut door turns into a permanent roadblock and the
+            // NPC stands against it for the rest of the level looking broken.
+            SmartObject door = World.BlockingDoor(npc.Position, npc.MoveTarget);
+            if (door != null && Vec3.FlatDistance(npc.Position, door.Position) < 1.6f)
+            {
+                door.SetState("open", 1f);
+                Publish(new WorldEvent
+                {
+                    Kind = EventKind.Noise,
+                    Position = door.Position,
+                    TrueActorId = npc.Id,
+                    ObjectId = door.Id,
+                    Loudness = 0.3f,
+                    Severity = 0.05f,
+                    Description = npc.Name + " pushes the " + door.Name + " open"
+                });
+            }
+
             MoveActor(ref npc.Position, ref npc.Facing, npc.MoveTarget, npc.MoveSpeed * dt);
 
             if (Vec3.FlatDistance(npc.Position, npc.MoveTarget) > 1.1f) return;
@@ -437,7 +468,7 @@ namespace AngryGuy.Core
 
             accused.AddRelationship(accuser.Id, -0.35f);
             accuser.AddRelationship(accused.Id, -0.25f);
-            accused.AddSuspicion(accuser.Id, 0.08f);
+            RaiseSuspicion(accused, accuser.Id, 0.08f, "resents being accused");
 
             // Deflection: the accused points at whoever they already suspect.
             // This is where blame chains stop being a two-person problem.
@@ -456,7 +487,8 @@ namespace AngryGuy.Core
             if (deflectTo.Length > 0 && best > 0.2f)
             {
                 accused.Say("Me? It was " + DisplayName(deflectTo) + ", everyone knows it!");
-                accuser.AddSuspicion(deflectTo, best * 0.35f * accuser.Personality.Gullibility);
+                RaiseSuspicion(accuser, deflectTo, best * 0.35f * accuser.Personality.Gullibility,
+                    "was told it was " + DisplayName(deflectTo));
 
                 Publish(new WorldEvent
                 {
@@ -499,7 +531,7 @@ namespace AngryGuy.Core
         private void PerceptionSample(Npc npc, float dt)
         {
             // Sight of the player.
-            if (npc.Perception.CanSee(npc.Position, npc.Facing, Player.Position, World))
+            if (CanSeePlayer(npc))
             {
                 npc.Memory.RecordSighting(Player.Id, Player.Position, Time, Player.VisibleGuilt(this));
             }
@@ -517,7 +549,7 @@ namespace AngryGuy.Core
 
             // Hearing the player move around out of sight is unsettling but anonymous.
             if (Player.MovementNoise > 0.2f &&
-                !npc.Perception.CanSee(npc.Position, npc.Facing, Player.Position, World) &&
+                !CanSeePlayer(npc) &&
                 npc.Perception.CanHear(npc.Position, Player.Position, Player.MovementNoise, World) &&
                 npc.Activity == NpcActivity.Idle &&
                 Rng.Chance(dt * 0.25f * npc.Personality.Observance))
@@ -690,22 +722,14 @@ namespace AngryGuy.Core
             float paranoiaScale = Mathx.Lerp(0.6f, 1.4f, npc.Personality.Paranoia);
             float gain = blame.Confidence * 0.45f * paranoiaScale;
 
-            npc.AddSuspicion(blame.SuspectId, gain);
+            RaiseSuspicion(npc, blame.SuspectId, gain, blame.Reason);
             npc.AddRelationship(blame.SuspectId, -0.12f);
 
             string suspectName = DisplayName(blame.SuspectId);
             npc.Say(suspectName + "... " + blame.Reason + ".", 3f);
             Log(npc.Name + " suspects " + suspectName + " (" + blame.Reason + ")");
 
-            if (blame.SuspectId == Player.Id)
-            {
-                if (npc.SuspicionOf(Player.Id) >= CaughtThreshold)
-                {
-                    Outcome = GameOutcome.Caught;
-                    Log(npc.Name + " is certain it was you. Caught.");
-                }
-                return;
-            }
+            if (blame.SuspectId == Player.Id) return;
 
             Npc suspect = World.GetNpc(blame.SuspectId);
             if (suspect == null) return;
@@ -768,8 +792,11 @@ namespace AngryGuy.Core
 
                 if (actorVisible && e.Severity >= 0.25f)
                 {
-                    float shock = 0.45f + e.Severity * 0.5f;
-                    npc.AddSuspicion(e.TrueActorId, shock);
+                    // Bad, but survivable. Being seen once should put the player
+                    // on the back foot, not end the level outright - they need the
+                    // chance to back off and let it cool.
+                    float shock = 0.25f + e.Severity * 0.35f;
+                    RaiseSuspicion(npc, e.TrueActorId, shock, "saw you do it");
                     npc.Memory.RecordSighting(e.TrueActorId, e.Position, Time, 1f);
                     npc.Memory.Remember(new MemoryEntry
                     {
@@ -785,12 +812,6 @@ namespace AngryGuy.Core
 
                     npc.Say("I SAW that, " + DisplayName(e.TrueActorId) + "!");
                     Log(npc.Name + " catches " + DisplayName(e.TrueActorId) + " in the act");
-
-                    if (e.TrueActorId == Player.Id && npc.SuspicionOf(Player.Id) >= CaughtThreshold)
-                    {
-                        Outcome = GameOutcome.Caught;
-                        Log(npc.Name + " saw you do it. Caught.");
-                    }
                     return;
                 }
             }
@@ -943,7 +964,17 @@ namespace AngryGuy.Core
                 ActorId = Player.Id
             };
 
+            bool witnessed = AnyoneWatchingPlayer();
+
             if (option.Affordance.Effect != null) option.Affordance.Effect(ctx);
+
+            _playerActions.Add(new PlayerAction
+            {
+                Time = Time,
+                Label = option.Label,
+                Sabotage = option.Affordance.IsSabotage,
+                Witnessed = witnessed
+            });
 
             // Anyone watching right now has seen you do this.
             float incrimination = option.Affordance.Incrimination;
@@ -952,20 +983,13 @@ namespace AngryGuy.Core
                 for (int i = 0; i < World.Npcs.Count; i++)
                 {
                     Npc npc = World.Npcs[i];
-                    if (!npc.Perception.CanSee(npc.Position, npc.Facing, Player.Position, World)) continue;
+                    if (!CanSeePlayer(npc)) continue;
 
-                    npc.AddSuspicion(Player.Id, incrimination * 0.55f);
+                    RaiseSuspicion(npc, Player.Id, incrimination * 0.55f, "watched you do it");
                     npc.Memory.RecordSighting(Player.Id, Player.Position, Time, incrimination);
                     if (incrimination > 0.5f)
                     {
                         npc.Say("What are you doing over there?");
-                        Log(npc.Name + " watches you closely.");
-                    }
-
-                    if (npc.SuspicionOf(Player.Id) >= CaughtThreshold)
-                    {
-                        Outcome = GameOutcome.Caught;
-                        Log(npc.Name + " caught you red-handed.");
                     }
                 }
             }
@@ -999,6 +1023,8 @@ namespace AngryGuy.Core
             {
                 ObjectiveMet = true;
                 Log(target.Name + " has completely lost it. Now get out without being pinned for it.");
+                Announce(FeedbackKind.Objective,
+                    target.Name + " has completely lost it - now get out the back door", target.Id);
             }
 
             if (!ObjectiveMet) return;
@@ -1021,6 +1047,127 @@ namespace AngryGuy.Core
         // Helpers
         // ------------------------------------------------------------------
 
+        /// <summary>
+        /// The only place player visibility is decided, so hiding and sneaking
+        /// cannot be silently bypassed by one caller that forgot about them.
+        /// </summary>
+        public bool CanSeePlayer(Npc npc)
+        {
+            if (Player.IsHidden) return false;
+
+            if (!npc.Perception.CanSee(npc.Position, npc.Facing, Player.Position, World)) return false;
+
+            // Moving slowly and low makes you much harder to pick out at range,
+            // though anyone close still sees you perfectly well.
+            if (Player.Sneaking)
+            {
+                float distance = Vec3.FlatDistance(npc.Position, Player.Position);
+                if (distance > npc.Perception.SightRange * 0.45f) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Is any NPC looking at the player right now?</summary>
+        public bool AnyoneWatchingPlayer()
+        {
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                if (CanSeePlayer(World.Npcs[i])) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Every NPC who can currently see the player, for the HUD warning.</summary>
+        public List<Npc> WatchersOfPlayer()
+        {
+            List<Npc> watchers = new List<Npc>();
+            for (int i = 0; i < World.Npcs.Count; i++)
+            {
+                if (CanSeePlayer(World.Npcs[i])) watchers.Add(World.Npcs[i]);
+            }
+            return watchers;
+        }
+
+        // ------------------------------------------------------------------
+        // Throwing
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Lob whatever you are holding. The noise happens where it lands, not
+        /// where you are - the cleanest distraction tool in the game, and the
+        /// one that best teaches "separate yourself from the evidence".
+        /// </summary>
+        public bool PlayerThrow()
+        {
+            if (!Player.IsCarrying || Outcome != GameOutcome.InProgress) return false;
+
+            SmartObject held = World.GetObject(Player.CarryingObjectId);
+            if (held == null) return false;
+
+            Vec3 direction = Player.Facing.Normalized;
+            if (direction.SqrMagnitude < 0.001f) direction = new Vec3(0f, 0f, 1f);
+
+            // Walk the throw forward until something stops it.
+            Vec3 landing = Player.Position;
+            for (float step = 0.5f; step <= Player.ThrowRange; step += 0.5f)
+            {
+                Vec3 candidate = World.Clamp(Player.Position + direction * step);
+                if (!World.HasLineOfSight(Player.Position, candidate)) break;
+                landing = candidate;
+            }
+
+            held.HeldBy = "";
+            held.Concealed = false;
+            held.Position = landing;
+            Player.CarryingObjectId = "";
+
+            bool seen = AnyoneWatchingPlayer();
+
+            Publish(new WorldEvent
+            {
+                Kind = EventKind.Noise,
+                Position = landing,
+                // Nobody sees where a thrown object came from unless they were
+                // already watching the player.
+                TrueActorId = seen ? Player.Id : "",
+                ObjectId = held.Id,
+                Loudness = 0.85f,
+                Severity = 0.2f,
+                Description = "something clatters across the floor"
+            });
+
+            _playerActions.Add(new PlayerAction
+            {
+                Time = Time,
+                Label = "Threw the " + held.Name,
+                Sabotage = false,
+                Witnessed = seen
+            });
+
+            Announce(FeedbackKind.Info, "You throw the " + held.Name + " - that'll draw someone over");
+            return true;
+        }
+
+        /// <summary>Tuck into a hiding spot, or step back out of one.</summary>
+        public bool PlayerToggleHide(SmartObject spot)
+        {
+            if (Player.IsHidden)
+            {
+                Player.HidingInObjectId = "";
+                Announce(FeedbackKind.Info, "You step back out");
+                return true;
+            }
+
+            if (spot == null || !spot.HasTag(Tags.Hiding)) return false;
+            if (Vec3.FlatDistance(spot.Position, Player.Position) > 2.2f) return false;
+
+            Player.HidingInObjectId = spot.Id;
+            Player.Position = spot.Position;
+            Announce(FeedbackKind.Info, "Hidden. Nobody can see you here.");
+            return true;
+        }
+
         public Vec3 ActorPosition(string actorId)
         {
             if (actorId == Player.Id) return Player.Position;
@@ -1037,8 +1184,98 @@ namespace AngryGuy.Core
 
         public void NoteAngerChange(Npc npc, float amount, string reason)
         {
-            if (amount < 0.05f) return;
-            Log(string.Format("{0} is angrier ({1:0.00}) - {2}", npc.Name, npc.Anger, reason));
+            // Below this it is background grumbling, not a beat the player caused.
+            if (amount < 0.02f) return;
+
+            Feedback.Push(new FeedbackEvent
+            {
+                Kind = FeedbackKind.Anger,
+                ActorId = npc.Id,
+                Amount = ToDisplay(amount),
+                Text = reason,
+                Time = Time
+            });
+
+            if (amount >= 0.05f)
+            {
+                Log(string.Format("{0}: +{1} anger - {2}", npc.Name, ToDisplay(amount), reason));
+            }
+        }
+
+        /// <summary>
+        /// The one place suspicion is raised, so every increase is both clamped
+        /// and reported. Direct calls to Npc.AddSuspicion bypass the player's
+        /// only warning that they are being noticed.
+        /// </summary>
+        public void RaiseSuspicion(Npc npc, string actorId, float amount, string reason)
+        {
+            if (amount <= 0f || actorId.Length == 0) return;
+
+            // Collapse the several ways one visible action reaches this method
+            // into a single penalty, so being spotted once costs one mistake's
+            // worth of suspicion rather than three.
+            if (actorId == Player.Id)
+            {
+                if (Time - npc.LastPlayerSuspicionTime < 1.5f) amount *= 0.25f;
+                npc.LastPlayerSuspicionTime = Time;
+            }
+
+            float before = npc.SuspicionOf(actorId);
+            npc.AddSuspicion(actorId, amount);
+            float after = npc.SuspicionOf(actorId);
+            float applied = after - before;
+            if (applied <= 0f) return;
+
+            if (actorId == Player.Id)
+            {
+                Feedback.Push(new FeedbackEvent
+                {
+                    Kind = FeedbackKind.Suspicion,
+                    ActorId = npc.Id,
+                    Amount = ToDisplay(applied),
+                    Text = reason,
+                    Time = Time
+                });
+
+                SuspicionTier wasTier = Suspicion.TierFor(before);
+                SuspicionTier isTier = Suspicion.TierFor(after);
+                if (isTier > wasTier)
+                {
+                    Feedback.Push(new FeedbackEvent
+                    {
+                        Kind = FeedbackKind.Alert,
+                        ActorId = npc.Id,
+                        Text = npc.Name + " is " + Suspicion.Describe(isTier),
+                        Time = Time
+                    });
+                    Log(npc.Name + " is " + Suspicion.Describe(isTier));
+                }
+
+                if (after >= CaughtThreshold)
+                {
+                    Outcome = GameOutcome.Caught;
+                    Log(npc.Name + " is certain it was you.");
+                }
+            }
+        }
+
+        /// <summary>Internal 0..1 to the 0-100 scale players actually read.</summary>
+        public static int ToDisplay(float normalised)
+        {
+            int value = (int)System.Math.Round(normalised * 100f);
+            if (value == 0 && normalised > 0f) value = 1;
+            return value;
+        }
+
+        public void Announce(FeedbackKind kind, string text, string actorId = "")
+        {
+            Feedback.Push(new FeedbackEvent
+            {
+                Kind = kind,
+                ActorId = actorId,
+                Text = text,
+                Time = Time
+            });
         }
 
         public void Log(string line)

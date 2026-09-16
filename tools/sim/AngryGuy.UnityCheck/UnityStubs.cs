@@ -27,6 +27,8 @@ namespace UnityEngine
         public float x, y, z;
         public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
         public static Vector3 zero { get { return new Vector3(); } }
+        public static Vector3 one { get { return new Vector3(1, 1, 1); } }
+        public static float Dot(Vector3 a, Vector3 b) { return 0f; }
         public static Vector3 up { get { return new Vector3(0, 1, 0); } }
         public static Vector3 forward { get { return new Vector3(0, 0, 1); } }
         public float sqrMagnitude { get { return x * x + y * y + z * z; } }
@@ -40,6 +42,13 @@ namespace UnityEngine
         public static Vector3 operator *(float s, Vector3 a) { return a; }
     }
 
+    public struct Vector2
+    {
+        public float x, y;
+        public Vector2(float x, float y) { this.x = x; this.y = y; }
+        public static Vector2 one { get { return new Vector2(1, 1); } }
+    }
+
     public struct Quaternion
     {
         public static Quaternion identity { get { return new Quaternion(); } }
@@ -47,6 +56,8 @@ namespace UnityEngine
         public static Quaternion LookRotation(Vector3 forward, Vector3 up) { return new Quaternion(); }
         public static Quaternion LookRotation(Vector3 forward) { return new Quaternion(); }
         public static Quaternion RotateTowards(Quaternion from, Quaternion to, float maxDegrees) { return from; }
+        public static Quaternion Slerp(Quaternion a, Quaternion b, float t) { return a; }
+        public static Quaternion Lerp(Quaternion a, Quaternion b, float t) { return a; }
         public static Vector3 operator *(Quaternion q, Vector3 v) { return v; }
     }
 
@@ -69,12 +80,25 @@ namespace UnityEngine
 
     public static class Mathf
     {
+        public const float Rad2Deg = 57.29578f;
+        public const float Deg2Rad = 0.0174532924f;
+        public const float PI = 3.14159274f;
+
         public static float Clamp(float v, float min, float max) { return v; }
         public static float Clamp01(float v) { return v; }
         public static float Lerp(float a, float b, float t) { return a; }
+        public static float LerpAngle(float a, float b, float t) { return a; }
+        public static float MoveTowards(float a, float b, float maxDelta) { return b; }
         public static float Max(float a, float b) { return a; }
+        public static float Min(float a, float b) { return a; }
         public static int Min(int a, int b) { return a; }
         public static int RoundToInt(float v) { return 0; }
+        public static float Sin(float v) { return 0f; }
+        public static float Cos(float v) { return 0f; }
+        public static float Abs(float v) { return v; }
+        public static float Atan2(float y, float x) { return 0f; }
+        public static float Exp(float v) { return 0f; }
+        public static float Sqrt(float v) { return 0f; }
     }
 
     public class Transform : Component
@@ -83,6 +107,7 @@ namespace UnityEngine
         public Vector3 localPosition { get; set; }
         public Vector3 localScale { get; set; }
         public Quaternion rotation { get; set; }
+        public Quaternion localRotation { get; set; }
         public Vector3 forward { get { return Vector3.forward; } }
         public Transform parent { get; set; }
         public void SetParent(Transform parent, bool worldPositionStays) { }
@@ -151,14 +176,43 @@ namespace UnityEngine
     {
         public Material(Shader shader) { }
         public Color color { get; set; }
+        public Texture mainTexture { get; set; }
+        public Vector2 mainTextureScale { get; set; }
         public bool HasProperty(string name) { return true; }
         public void SetColor(string name, Color value) { }
+        public void SetTexture(string name, Texture value) { }
+        public void SetTextureScale(string name, Vector2 value) { }
     }
 
-    public class Texture : Object { }
+    public enum TextureWrapMode { Repeat, Clamp, Mirror, MirrorOnce }
+
+    public class Texture : Object
+    {
+        public TextureWrapMode wrapMode { get; set; }
+    }
+
     public class Texture2D : Texture
     {
         public static Texture2D whiteTexture { get { return null; } }
+    }
+
+    public static class Resources
+    {
+        public static T Load<T>(string path) where T : Object { return null; }
+    }
+
+    public class AudioClip : Object { }
+
+    public class AudioSource : Behaviour
+    {
+        public AudioClip clip { get; set; }
+        public bool loop { get; set; }
+        public bool playOnAwake { get; set; }
+        public float volume { get; set; }
+        public float spatialBlend { get; set; }
+        public void Play() { }
+        public void PlayOneShot(AudioClip clip, float volumeScale) { }
+        public static void PlayClipAtPoint(AudioClip clip, Vector3 position, float volume) { }
     }
 
     public enum LightType { Directional, Point, Spot }
@@ -211,6 +265,7 @@ namespace UnityEngine
     public static class Time
     {
         public static float deltaTime { get { return 0.016f; } }
+        public static float time { get { return 0f; } }
     }
 
     public static class Screen
@@ -234,7 +289,7 @@ namespace UnityEngine
 
     public enum KeyCode
     {
-        Escape, V, Q, E, R, T, Tab, LeftShift, RightShift,
+        Escape, V, Q, E, R, T, F, H, Tab, LeftShift, RightShift, LeftControl,
         Alpha1, Alpha2, Alpha3, Alpha4, Alpha5, Alpha6, Alpha7, Alpha8, Alpha9
     }
 
@@ -273,6 +328,7 @@ namespace UnityEngine
         public int fontSize { get; set; }
         public FontStyle fontStyle { get; set; }
         public TextAnchor alignment { get; set; }
+        public bool wordWrap { get; set; }
         public GUIStyleState normal { get; set; } = new GUIStyleState();
     }
 

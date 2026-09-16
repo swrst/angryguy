@@ -101,6 +101,13 @@ namespace AngryGuy.Core
         /// <summary>How many times a plan of theirs has collapsed. Escalates reactions.</summary>
         public int FrustrationCount;
 
+        /// <summary>
+        /// When this NPC last gained suspicion of the player. One action can trip
+        /// several code paths at once (the act is seen AND the resulting event is
+        /// witnessed); without this they stack and a single slip ends the run.
+        /// </summary>
+        public float LastPlayerSuspicionTime = -99f;
+
         /// <summary>Last thing they said, surfaced in the HUD as a speech bubble.</summary>
         public string Speech = "";
         public float SpeechTimer;
@@ -157,6 +164,46 @@ namespace AngryGuy.Core
                 if (Anger >= 0.35f) return "irritated";
                 if (Anger >= 0.15f) return "bothered";
                 return "calm";
+            }
+        }
+
+        /// <summary>
+        /// What this NPC is visibly doing, in words the player can act on.
+        /// Shown above their head, because "Investigating" on screen is the
+        /// difference between a readable stealth game and a confusing one.
+        /// </summary>
+        public string StatusLabel
+        {
+            get
+            {
+                switch (Activity)
+                {
+                    case NpcActivity.Investigating: return "investigating";
+                    case NpcActivity.Confronting: return "confronting " + ConfrontTargetId;
+                    case NpcActivity.Chatting: return "chatting";
+                    case NpcActivity.Using:
+                        return CurrentPlan != null ? CurrentPlan.Describe().ToLowerInvariant() : "busy";
+                    case NpcActivity.Walking:
+                        return CurrentPlan != null
+                            ? "off to " + CurrentPlan.Target.Name
+                            : "wandering";
+                    case NpcActivity.Watching: return "looking around";
+                    default: return "idle";
+                }
+            }
+        }
+
+        /// <summary>Short glyph for the bubble over their head. ASCII only - no font dependency.</summary>
+        public string StatusGlyph
+        {
+            get
+            {
+                if (Anger >= 0.85f) return "!!!";
+                if (Activity == NpcActivity.Confronting) return "!!";
+                if (Activity == NpcActivity.Investigating) return "?";
+                if (Anger >= 0.5f) return "!";
+                if (Activity == NpcActivity.Chatting) return "...";
+                return "";
             }
         }
 

@@ -41,6 +41,11 @@ namespace AngryGuy.Tests
             Test("Sabotaging unobserved raises no suspicion", UnseenSabotageIsClean);
 
             Test("Walls block line of sight", WallsBlockSight);
+            Test("A shut door blocks line of sight", ShutDoorBlocksSight);
+            Test("Hiding makes the player unseeable", HidingWorks);
+            Test("Sneaking shortens the range you are spotted at", SneakingShortensSpotting);
+            Test("Throwing lands the object away from you and makes noise", ThrowingMakesNoiseElsewhere);
+            Test("Suspicion changes are reported to the player", SuspicionIsReported);
             Test("Same seed produces the same run", RunDeterminism);
 
             Test("End to end: the chef can be driven furious", EndToEndAngerRises);
@@ -458,6 +463,110 @@ namespace AngryGuy.Tests
             // Through the doorway gap.
             AssertTrue(sim.World.HasLineOfSight(new Vec3(-3f, 0f, 0f), new Vec3(3f, 0f, 0f)),
                 "the doorway should be see-through");
+        }
+
+        private static void ShutDoorBlocksSight()
+        {
+            Simulation sim = KitchenLevel.Build(200);
+            SmartObject door = sim.World.GetObject(KitchenLevel.Ids.Door);
+
+            Vec3 kitchenSide = new Vec3(-3f, 0f, 0f);
+            Vec3 diningSide = new Vec3(3f, 0f, 0f);
+
+            AssertTrue(sim.World.HasLineOfSight(kitchenSide, diningSide),
+                "the doorway is open to begin with");
+
+            door.SetState("open", 0f);
+            AssertTrue(!sim.World.HasLineOfSight(kitchenSide, diningSide),
+                "shutting the door should cut the sight line");
+        }
+
+        private static void HidingWorks()
+        {
+            Simulation sim = KitchenLevel.Build(201);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+            SmartObject pantry = sim.World.GetObject(KitchenLevel.Ids.Pantry);
+
+            sim.Player.Position = pantry.Position;
+            eva.Position = new Vec3(pantry.Position.X + 2f, 0f, pantry.Position.Z);
+            eva.Facing = (sim.Player.Position - eva.Position).Normalized;
+
+            AssertTrue(sim.CanSeePlayer(eva), "standing in the open, she should see you");
+
+            AssertTrue(sim.PlayerToggleHide(pantry), "hiding should succeed next to the pantry");
+            AssertTrue(!sim.CanSeePlayer(eva), "hidden, she should not see you at all");
+
+            AssertTrue(sim.PlayerToggleHide(null), "toggling again should come back out");
+            AssertTrue(sim.CanSeePlayer(eva), "out in the open again, she sees you");
+        }
+
+        private static void SneakingShortensSpotting()
+        {
+            Simulation sim = KitchenLevel.Build(202);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+
+            eva.Position = new Vec3(0f, 0f, -5f);
+            eva.Facing = new Vec3(1f, 0f, 0f);
+
+            // Well inside her sight range, but beyond the sneaking cut-off.
+            sim.Player.Position = new Vec3(eva.Position.X + eva.Perception.SightRange * 0.8f, 0f, eva.Position.Z);
+
+            sim.Player.Sneaking = false;
+            AssertTrue(sim.CanSeePlayer(eva), "walking upright at that range, she sees you");
+
+            sim.Player.Sneaking = true;
+            AssertTrue(!sim.CanSeePlayer(eva), "sneaking at that range, she should not");
+
+            // But sneaking is no help at all up close.
+            sim.Player.Position = new Vec3(eva.Position.X + 1.5f, 0f, eva.Position.Z);
+            AssertTrue(sim.CanSeePlayer(eva), "sneaking right in front of her is still visible");
+        }
+
+        private static void ThrowingMakesNoiseElsewhere()
+        {
+            Simulation sim = KitchenLevel.Build(203);
+            SmartObject salt = sim.World.GetObject(KitchenLevel.Ids.Salt);
+
+            ParkEveryoneInDining(sim);
+            sim.Player.Position = new Vec3(-5f, 0f, 0f);
+            sim.Player.Facing = new Vec3(0f, 0f, -1f);
+
+            salt.HeldBy = PlayerAvatar.PlayerId;
+            sim.Player.CarryingObjectId = salt.Id;
+
+            AssertTrue(sim.PlayerThrow(), "throwing should succeed while carrying");
+            AssertTrue(!sim.Player.IsCarrying, "hands should be empty afterwards");
+
+            float distance = Vec3.FlatDistance(salt.Position, sim.Player.Position);
+            AssertTrue(distance > 2f, "it should land away from you, landed " + distance + "m away");
+
+            bool noiseAtLanding = false;
+            IReadOnlyList<WorldEvent> log = sim.Events.Log;
+            for (int i = 0; i < log.Count; i++)
+            {
+                if (log[i].Kind != EventKind.Noise) continue;
+                if (Vec3.FlatDistance(log[i].Position, salt.Position) < 0.5f) noiseAtLanding = true;
+            }
+            AssertTrue(noiseAtLanding, "the noise must happen where it lands, not where you are");
+        }
+
+        private static void SuspicionIsReported()
+        {
+            Simulation sim = KitchenLevel.Build(204);
+            Npc eva = sim.World.GetNpc(KitchenLevel.Ids.Manager);
+
+            sim.Feedback.Drain();
+            sim.RaiseSuspicion(eva, PlayerAvatar.PlayerId, 0.3f, "saw something");
+
+            List<FeedbackEvent> events = sim.Feedback.Drain();
+            bool reported = false;
+            for (int i = 0; i < events.Count; i++)
+            {
+                if (events[i].Kind == FeedbackKind.Suspicion && events[i].Amount > 0) reported = true;
+            }
+
+            AssertTrue(reported,
+                "a suspicion increase the player caused must surface as feedback with a number");
         }
 
         private static void RunDeterminism()

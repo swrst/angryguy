@@ -50,7 +50,8 @@ namespace AngryGuy.Core
 
             if (topSuspect.Length > 0 && topValue > 0.18f)
             {
-                to.AddSuspicion(topSuspect, topValue * transfer);
+                sim.RaiseSuspicion(to, topSuspect, topValue * transfer,
+                    "heard it from " + from.Name);
                 to.AddRelationship(topSuspect, -0.06f * transfer);
 
                 string suspectName = sim.DisplayName(topSuspect);

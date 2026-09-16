@@ -5,20 +5,23 @@ using UnityEngine;
 namespace AngryGuy.UnityLayer
 {
     /// <summary>
-    /// Renders the simulation as grey-box primitives. No art, no prefabs, no
-    /// scene file: the level you see is generated from the same data the AI
-    /// reasons about, so the two can never drift apart.
-    ///
-    /// Swapping in real models later means replacing CreatePrimitive calls with
-    /// Instantiate(prefab). The simulation does not know or care.
+    /// Renders the simulation. Still generated entirely from level data rather
+    /// than a scene file, but no longer flat grey boxes: textured surfaces,
+    /// articulated characters and animated doors, so the player can tell what
+    /// they are looking at without reading the debug overlay.
     /// </summary>
     public sealed class LevelView
     {
-        private readonly Dictionary<string, Transform> _objectViews = new Dictionary<string, Transform>();
+        private readonly Dictionary<string, ObjectView> _objectViews = new Dictionary<string, ObjectView>();
         private readonly Dictionary<string, NpcView> _npcViews = new Dictionary<string, NpcView>();
 
         private Transform _root;
         private Materials _materials;
+
+        public Materials Materials
+        {
+            get { return _materials; }
+        }
 
         public IReadOnlyDictionary<string, NpcView> NpcViews
         {
@@ -34,7 +37,7 @@ namespace AngryGuy.UnityLayer
             _root = root.transform;
 
             BuildLighting();
-            BuildFloor(sim);
+            BuildFloors(sim);
             BuildWalls(sim);
             BuildZones(sim);
             BuildObjects(sim);
@@ -55,10 +58,8 @@ namespace AngryGuy.UnityLayer
         private void BuildLighting()
         {
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = new Color(0.42f, 0.44f, 0.5f);
+            RenderSettings.ambientLight = new Color(0.44f, 0.45f, 0.5f);
 
-            // Unity's default scene already ships a directional light. Only add one
-            // if the scene is genuinely empty, or everything ends up double-lit.
             if (Object.FindAnyObjectByType<Light>() != null) return;
 
             GameObject sun = new GameObject("Sun");
@@ -67,28 +68,50 @@ namespace AngryGuy.UnityLayer
 
             Light light = sun.AddComponent<Light>();
             light.type = LightType.Directional;
-            light.intensity = 1.05f;
+            light.intensity = 1.1f;
             light.color = new Color(1f, 0.97f, 0.9f);
             light.shadows = LightShadows.Soft;
         }
 
-        private void BuildFloor(Simulation sim)
+        /// <summary>
+        /// Two floors, not one: tile on the kitchen side, boards on the dining
+        /// side. It costs nothing and instantly tells the player which half of
+        /// the building they are standing in.
+        /// </summary>
+        private void BuildFloors(Simulation sim)
         {
-            float width = sim.World.FloorMax.X - sim.World.FloorMin.X;
-            float depth = sim.World.FloorMax.Z - sim.World.FloorMin.Z;
+            float minX = sim.World.FloorMin.X;
+            float maxX = sim.World.FloorMax.X;
+            float minZ = sim.World.FloorMin.Z;
+            float maxZ = sim.World.FloorMax.Z;
+            float depth = maxZ - minZ;
 
+            AddFloor("KitchenFloor",
+                new Vector3((minX + 0f) * 0.5f, 0f, (minZ + maxZ) * 0.5f),
+                new Vector3(-minX, 1f, depth),
+                "kitchen_tile", new Color(0.86f, 0.86f, 0.84f), 3f);
+
+            AddFloor("DiningFloor",
+                new Vector3((0f + maxX) * 0.5f, 0f, (minZ + maxZ) * 0.5f),
+                new Vector3(maxX, 1f, depth),
+                "wood_floor", new Color(0.88f, 0.84f, 0.78f), 2.5f);
+        }
+
+        private void AddFloor(string name, Vector3 centre, Vector3 size, string texture,
+            Color tint, float tiling)
+        {
             GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
-            floor.name = "Floor";
+            floor.name = name;
             floor.transform.SetParent(_root, false);
+            floor.transform.localScale = new Vector3(size.x / 10f, 1f, size.z / 10f);
+            floor.transform.position = centre;
 
-            // A Unity plane is 10x10 units at scale 1.
-            floor.transform.localScale = new Vector3(width / 10f, 1f, depth / 10f);
-            floor.transform.position = new Vector3(
-                (sim.World.FloorMin.X + sim.World.FloorMax.X) * 0.5f,
-                0f,
-                (sim.World.FloorMin.Z + sim.World.FloorMax.Z) * 0.5f);
-
-            Paint(floor, _materials.Lit(new Color(0.62f, 0.60f, 0.57f)));
+            Renderer renderer = floor.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.sharedMaterial = _materials.Textured(texture, tint,
+                    new Vector2(size.x * tiling / 10f, size.z * tiling / 10f));
+            }
         }
 
         private void BuildWalls(Simulation sim)
@@ -96,20 +119,23 @@ namespace AngryGuy.UnityLayer
             for (int i = 0; i < sim.World.Walls.Count; i++)
             {
                 Wall wall = sim.World.Walls[i];
-
                 Vector3 a = ToUnity(wall.A);
                 Vector3 b = ToUnity(wall.B);
-                Vector3 mid = (a + b) * 0.5f;
                 float length = Vector3.Distance(a, b);
 
                 GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 cube.name = "Wall" + i;
                 cube.transform.SetParent(_root, false);
-                cube.transform.position = mid + Vector3.up * (wall.Height * 0.5f);
+                cube.transform.position = (a + b) * 0.5f + Vector3.up * (wall.Height * 0.5f);
                 cube.transform.rotation = Quaternion.LookRotation((b - a).normalized, Vector3.up);
                 cube.transform.localScale = new Vector3(0.25f, wall.Height, length);
 
-                Paint(cube, _materials.Lit(new Color(0.48f, 0.47f, 0.5f)));
+                Renderer renderer = cube.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    renderer.sharedMaterial = _materials.Textured("wall_paint",
+                        new Color(0.86f, 0.86f, 0.88f), new Vector2(length * 0.5f, wall.Height * 0.5f));
+                }
             }
 
             BuildPerimeter(sim);
@@ -122,10 +148,10 @@ namespace AngryGuy.UnityLayer
             float minZ = sim.World.FloorMin.Z;
             float maxZ = sim.World.FloorMax.Z;
 
-            AddPerimeterWall(new Vector3((minX + maxX) * 0.5f, 1.25f, minZ), new Vector3(maxX - minX, 2.5f, 0.25f));
-            AddPerimeterWall(new Vector3((minX + maxX) * 0.5f, 1.25f, maxZ), new Vector3(maxX - minX, 2.5f, 0.25f));
-            AddPerimeterWall(new Vector3(minX, 1.25f, (minZ + maxZ) * 0.5f), new Vector3(0.25f, 2.5f, maxZ - minZ));
-            AddPerimeterWall(new Vector3(maxX, 1.25f, (minZ + maxZ) * 0.5f), new Vector3(0.25f, 2.5f, maxZ - minZ));
+            AddPerimeterWall(new Vector3((minX + maxX) * 0.5f, 1.4f, minZ), new Vector3(maxX - minX, 2.8f, 0.3f));
+            AddPerimeterWall(new Vector3((minX + maxX) * 0.5f, 1.4f, maxZ), new Vector3(maxX - minX, 2.8f, 0.3f));
+            AddPerimeterWall(new Vector3(minX, 1.4f, (minZ + maxZ) * 0.5f), new Vector3(0.3f, 2.8f, maxZ - minZ));
+            AddPerimeterWall(new Vector3(maxX, 1.4f, (minZ + maxZ) * 0.5f), new Vector3(0.3f, 2.8f, maxZ - minZ));
         }
 
         private void AddPerimeterWall(Vector3 position, Vector3 scale)
@@ -135,7 +161,13 @@ namespace AngryGuy.UnityLayer
             cube.transform.SetParent(_root, false);
             cube.transform.position = position;
             cube.transform.localScale = scale;
-            Paint(cube, _materials.Lit(new Color(0.35f, 0.34f, 0.36f)));
+
+            Renderer renderer = cube.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.sharedMaterial = _materials.Textured("wall_paint",
+                    new Color(0.7f, 0.7f, 0.74f), new Vector2(scale.x + scale.z, scale.y * 0.5f));
+            }
         }
 
         private void BuildZones(Simulation sim)
@@ -146,36 +178,81 @@ namespace AngryGuy.UnityLayer
             GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             marker.name = "ExitZone";
             marker.transform.SetParent(_root, false);
-            marker.transform.position = ToUnity(exit.Center) + Vector3.up * 0.02f;
-            marker.transform.localScale = new Vector3(exit.Radius * 2f, 0.02f, exit.Radius * 2f);
+            marker.transform.position = ToUnity(exit.Center) + Vector3.up * 0.03f;
+            marker.transform.localScale = new Vector3(exit.Radius * 2f, 0.03f, exit.Radius * 2f);
             Object.Destroy(marker.GetComponent<Collider>());
-            Paint(marker, _materials.Unlit(new Color(0.25f, 0.85f, 0.4f)));
+
+            Renderer renderer = marker.GetComponent<Renderer>();
+            if (renderer != null) renderer.sharedMaterial = _materials.Unlit(new Color(0.25f, 0.9f, 0.45f));
+
+            // A sign post so the exit reads as a way out rather than a green rug.
+            GameObject post = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            post.name = "ExitSign";
+            post.transform.SetParent(_root, false);
+            post.transform.position = ToUnity(exit.Center) + Vector3.up * 2.2f;
+            post.transform.localScale = new Vector3(1.1f, 0.35f, 0.1f);
+            Object.Destroy(post.GetComponent<Collider>());
+            Renderer signRenderer = post.GetComponent<Renderer>();
+            if (signRenderer != null) signRenderer.sharedMaterial = _materials.Unlit(new Color(0.2f, 0.85f, 0.4f));
         }
 
         private void BuildObjects(Simulation sim)
         {
             for (int i = 0; i < sim.World.Objects.Count; i++)
             {
-                CreateObjectView(sim.World.Objects[i]);
+                CreateObjectView(sim, sim.World.Objects[i]);
             }
         }
 
-        private Transform CreateObjectView(SmartObject obj)
+        private ObjectView CreateObjectView(Simulation sim, SmartObject obj)
         {
-            GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            cube.name = "Obj_" + obj.Id;
-            cube.transform.SetParent(_root, false);
-            cube.transform.localScale = new Vector3(obj.Size.X, Mathf.Max(0.05f, obj.Size.Y), obj.Size.Z);
-            cube.transform.position = ToUnity(obj.Position) + Vector3.up * (obj.Size.Y * 0.5f);
+            ObjectView view = new ObjectView();
 
-            // Small props must not shove the player around.
-            Collider collider = cube.GetComponent<Collider>();
-            if (collider != null && obj.Size.Y < 0.6f) Object.Destroy(collider);
+            if (obj.HasTag(Tags.Door))
+            {
+                BuildDoorView(view, obj);
+            }
+            else
+            {
+                GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cube.name = "Obj_" + obj.Id;
+                cube.transform.SetParent(_root, false);
+                cube.transform.localScale = new Vector3(obj.Size.X, Mathf.Max(0.05f, obj.Size.Y), obj.Size.Z);
+                cube.transform.position = ToUnity(obj.Position) + Vector3.up * (obj.Size.Y * 0.5f);
 
-            Paint(cube, _materials.Lit(ObjectColour(obj)));
+                Collider collider = cube.GetComponent<Collider>();
+                if (collider != null && obj.Size.Y < 0.6f) Object.Destroy(collider);
 
-            _objectViews[obj.Id] = cube.transform;
-            return cube.transform;
+                view.Root = cube.transform;
+                view.Body = cube.transform;
+                view.Renderer = cube.GetComponent<Renderer>();
+            }
+
+            view.BaseColour = ObjectColour(obj);
+            view.Texture = ObjectTexture(obj);
+            ApplySurface(view, view.BaseColour);
+
+            _objectViews[obj.Id] = view;
+            return view;
+        }
+
+        private void BuildDoorView(ObjectView view, SmartObject obj)
+        {
+            GameObject pivot = new GameObject("Door_" + obj.Id);
+            pivot.transform.SetParent(_root, false);
+            pivot.transform.position = ToUnity(obj.Position) + new Vector3(0f, 0f, -obj.Size.Z * 0.5f);
+
+            GameObject leaf = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            leaf.name = "Leaf";
+            leaf.transform.SetParent(pivot.transform, false);
+            leaf.transform.localPosition = new Vector3(0f, obj.Size.Y * 0.5f, obj.Size.Z * 0.5f);
+            leaf.transform.localScale = new Vector3(obj.Size.X, obj.Size.Y, obj.Size.Z);
+            Object.Destroy(leaf.GetComponent<Collider>());
+
+            view.Root = pivot.transform;
+            view.Body = leaf.transform;
+            view.Renderer = leaf.GetComponent<Renderer>();
+            view.IsDoor = true;
         }
 
         private void BuildNpcs(Simulation sim)
@@ -184,50 +261,25 @@ namespace AngryGuy.UnityLayer
             {
                 Npc npc = sim.World.Npcs[i];
 
-                GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                body.name = "Npc_" + npc.Id;
-                body.transform.SetParent(_root, false);
-                body.transform.localScale = new Vector3(0.75f, 0.85f, 0.75f);
-                Object.Destroy(body.GetComponent<Collider>());
+                CharacterRig rig = new CharacterRig();
+                Color uniform = UniformFor(npc);
+                Color skin = SkinFor(npc);
+                rig.Build(_root, "Npc_" + npc.Id, uniform, skin, _materials, npc.IsTarget);
 
-                // A nose, so you can tell at a glance which way they are facing.
-                GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                nose.name = "Facing";
-                nose.transform.SetParent(body.transform, false);
-                nose.transform.localScale = new Vector3(0.25f, 0.25f, 0.45f);
-                nose.transform.localPosition = new Vector3(0f, 0.25f, 0.55f);
-                Object.Destroy(nose.GetComponent<Collider>());
-                Paint(nose, _materials.Lit(new Color(0.15f, 0.15f, 0.18f)));
-
-                // Target gets a hat so the objective is unmistakable.
-                if (npc.IsTarget)
+                _npcViews[npc.Id] = new NpcView
                 {
-                    GameObject hat = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    hat.name = "Hat";
-                    hat.transform.SetParent(body.transform, false);
-                    hat.transform.localScale = new Vector3(0.7f, 0.35f, 0.7f);
-                    hat.transform.localPosition = new Vector3(0f, 1.15f, 0f);
-                    Object.Destroy(hat.GetComponent<Collider>());
-                    Paint(hat, _materials.Lit(Color.white));
-                }
-
-                NpcView view = new NpcView
-                {
-                    Body = body.transform,
-                    Renderer = body.GetComponent<Renderer>(),
-                    Material = _materials.Lit(Color.green),
-                    Cone = BuildVisionCone(body.transform)
+                    Rig = rig,
+                    Uniform = uniform,
+                    Skin = skin,
+                    Cone = BuildVisionCone(rig.Root)
                 };
-                view.Renderer.sharedMaterial = view.Material;
-
-                _npcViews[npc.Id] = view;
             }
         }
 
         /// <summary>
-        /// Draws each NPC's field of view on the floor. In a stealth game the
-        /// player cannot plan around perception they cannot see, so this is a
-        /// gameplay feature during the prototype, not a debug gizmo.
+        /// Field of view drawn on the floor. In a stealth game this is a gameplay
+        /// feature, not a debug gizmo: the player cannot plan around perception
+        /// they cannot see.
         /// </summary>
         private LineRenderer BuildVisionCone(Transform parent)
         {
@@ -237,7 +289,7 @@ namespace AngryGuy.UnityLayer
             LineRenderer line = coneObject.AddComponent<LineRenderer>();
             line.useWorldSpace = true;
             line.loop = true;
-            line.widthMultiplier = 0.06f;
+            line.widthMultiplier = 0.07f;
             line.positionCount = ConeSegments + 2;
             line.sharedMaterial = _materials.Unlit(Color.white);
             line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -245,33 +297,50 @@ namespace AngryGuy.UnityLayer
             return line;
         }
 
-        private const int ConeSegments = 14;
+        private const int ConeSegments = 16;
 
         // ------------------------------------------------------------------
         // Per-frame sync
         // ------------------------------------------------------------------
 
-        public void Sync(Simulation sim)
+        public void Sync(Simulation sim, float dt, string focusedObjectId)
         {
             for (int i = 0; i < sim.World.Objects.Count; i++)
             {
                 SmartObject obj = sim.World.Objects[i];
 
-                Transform view;
+                ObjectView view;
                 if (!_objectViews.TryGetValue(obj.Id, out view))
                 {
-                    // Objects can appear mid-level (an oil slick, for instance).
-                    view = CreateObjectView(obj);
+                    // Objects can appear mid-level - an oil slick, for instance.
+                    view = CreateObjectView(sim, obj);
                 }
 
                 bool visible = !obj.Concealed && obj.HeldBy.Length == 0;
-                if (view.gameObject.activeSelf != visible) view.gameObject.SetActive(visible);
+                if (view.Root.gameObject.activeSelf != visible) view.Root.gameObject.SetActive(visible);
                 if (!visible) continue;
 
-                view.position = ToUnity(obj.Position) + Vector3.up * (obj.Size.Y * 0.5f);
+                if (view.IsDoor)
+                {
+                    float open = obj.GetState("open") > 0f ? 95f : 0f;
+                    view.Root.localRotation = Quaternion.Slerp(
+                        view.Root.localRotation, Quaternion.Euler(0f, open, 0f), 1f - Mathf.Exp(-9f * dt));
+                }
+                else
+                {
+                    view.Root.position = ToUnity(obj.Position) + Vector3.up * (obj.Size.Y * 0.5f);
+                }
 
-                Renderer renderer = view.GetComponent<Renderer>();
-                if (renderer != null) renderer.sharedMaterial = _materials.Lit(ObjectColour(obj));
+                Color colour = ObjectColour(obj);
+                if (obj.Id == focusedObjectId)
+                {
+                    // Focused objects glow, so "what am I about to interact with"
+                    // is never a guess.
+                    float pulse = 0.55f + 0.45f * Mathf.Sin(Time.time * 6f);
+                    colour = Color.Lerp(colour, new Color(1f, 0.95f, 0.5f), 0.35f + pulse * 0.35f);
+                }
+
+                ApplySurface(view, colour);
             }
 
             for (int i = 0; i < sim.World.Npcs.Count; i++)
@@ -281,15 +350,14 @@ namespace AngryGuy.UnityLayer
                 NpcView view;
                 if (!_npcViews.TryGetValue(npc.Id, out view)) continue;
 
-                view.Body.position = ToUnity(npc.Position) + Vector3.up * 0.85f;
+                bool sitting = npc.Activity == NpcActivity.Using
+                               && npc.CurrentPlan != null
+                               && npc.CurrentPlan.Target != null
+                               && npc.CurrentPlan.Target.HasTag(Tags.Seat);
 
-                Vector3 facing = ToUnity(npc.Facing);
-                if (facing.sqrMagnitude > 0.001f)
-                {
-                    view.Body.rotation = Quaternion.LookRotation(facing.normalized, Vector3.up);
-                }
+                view.Rig.Pose(npc.Position, npc.Facing, npc.Activity, npc.Anger, sitting, dt,
+                    _materials, view.Uniform, view.Skin);
 
-                view.Renderer.sharedMaterial = _materials.Lit(AngerColour(npc.Anger));
                 UpdateCone(view.Cone, npc, sim);
             }
         }
@@ -313,38 +381,66 @@ namespace AngryGuy.UnityLayer
                 line.SetPosition(i + 1, origin + direction * range);
             }
 
-            // Green = has not noticed you. Red = is fairly sure it was you.
+            // Green: hasn't noticed you. Amber: something feels off. Red: on to you.
             float suspicion = npc.SuspicionOf(PlayerAvatar.PlayerId);
-            Color colour = Color.Lerp(new Color(0.3f, 0.9f, 0.45f), new Color(1f, 0.25f, 0.2f), suspicion);
-            colour.a = 0.55f;
+            Color colour = suspicion < 0.4f
+                ? Color.Lerp(new Color(0.3f, 0.9f, 0.45f), new Color(0.95f, 0.8f, 0.2f), suspicion / 0.4f)
+                : Color.Lerp(new Color(0.95f, 0.8f, 0.2f), new Color(1f, 0.2f, 0.16f), (suspicion - 0.4f) / 0.6f);
+
             line.startColor = colour;
-            line.endColor = new Color(colour.r, colour.g, colour.b, 0.12f);
+            line.endColor = new Color(colour.r, colour.g, colour.b, 0.1f);
         }
 
         // ------------------------------------------------------------------
         // Helpers
         // ------------------------------------------------------------------
 
-        private Color ObjectColour(SmartObject obj)
+        private void ApplySurface(ObjectView view, Color colour)
         {
-            if (obj.HasTag(Tags.Hazard)) return new Color(0.85f, 0.75f, 0.15f);
+            if (view.Renderer == null) return;
+
+            view.Renderer.sharedMaterial = view.Texture.Length > 0
+                ? _materials.Textured(view.Texture, colour, new Vector2(1.5f, 1.5f))
+                : _materials.Lit(colour);
+        }
+
+        private static string ObjectTexture(SmartObject obj)
+        {
+            if (obj.HasTag(Tags.Hiding)) return "fabric";
+            if (obj.HasTag(Tags.Appliance) || obj.HasTag(Tags.Container)) return "worktop_steel";
+            if (obj.HasTag(Tags.Door) || obj.HasTag(Tags.Seat)) return "wood_floor";
+            return "";
+        }
+
+        private static Color ObjectColour(SmartObject obj)
+        {
+            if (obj.HasTag(Tags.Hazard)) return new Color(0.9f, 0.78f, 0.15f);
             if (obj.HasTag(Tags.Mess)) return new Color(0.45f, 0.4f, 0.2f);
             if (obj.IsBroken) return new Color(0.85f, 0.35f, 0.2f);
-            if (obj.OwnerId.Length > 0) return new Color(0.55f, 0.6f, 0.72f);
-            return new Color(0.72f, 0.72f, 0.7f);
+            if (obj.HasTag(Tags.Hiding)) return new Color(0.75f, 0.7f, 0.85f);
+            if (obj.HasTag(Tags.Door)) return new Color(0.85f, 0.8f, 0.7f);
+            if (obj.OwnerId.Length > 0) return new Color(0.78f, 0.82f, 0.95f);
+            return new Color(0.88f, 0.88f, 0.86f);
         }
 
-        private static Color AngerColour(float anger)
+        private static Color UniformFor(Npc npc)
         {
-            return anger < 0.5f
-                ? Color.Lerp(new Color(0.45f, 0.75f, 0.5f), new Color(0.95f, 0.85f, 0.3f), anger / 0.5f)
-                : Color.Lerp(new Color(0.95f, 0.85f, 0.3f), new Color(0.9f, 0.18f, 0.15f), (anger - 0.5f) / 0.5f);
+            switch (npc.Role)
+            {
+                case "head chef": return new Color(0.94f, 0.94f, 0.92f);
+                case "waiter": return new Color(0.25f, 0.3f, 0.55f);
+                case "dishwasher": return new Color(0.35f, 0.5f, 0.42f);
+                default: return new Color(0.28f, 0.28f, 0.32f);
+            }
         }
 
-        private void Paint(GameObject target, Material material)
+        private static Color SkinFor(Npc npc)
         {
-            Renderer renderer = target.GetComponent<Renderer>();
-            if (renderer != null) renderer.sharedMaterial = material;
+            // Just enough variation that four people are distinguishable at range.
+            int hash = 0;
+            for (int i = 0; i < npc.Id.Length; i++) hash = hash * 31 + npc.Id[i];
+            float t = Mathf.Abs((hash % 100) / 100f);
+            return Color.Lerp(new Color(0.96f, 0.80f, 0.68f), new Color(0.45f, 0.31f, 0.23f), t);
         }
 
         public static Vector3 ToUnity(Vec3 v)
@@ -358,25 +454,36 @@ namespace AngryGuy.UnityLayer
         }
     }
 
-    public sealed class NpcView
+    public sealed class ObjectView
     {
+        public Transform Root;
         public Transform Body;
         public Renderer Renderer;
-        public Material Material;
+        public Color BaseColour;
+        public string Texture = "";
+        public bool IsDoor;
+    }
+
+    public sealed class NpcView
+    {
+        public CharacterRig Rig;
         public LineRenderer Cone;
+        public Color Uniform;
+        public Color Skin;
     }
 
     /// <summary>
-    /// Shared materials, cached by colour.
+    /// Shared materials, cached by colour and texture.
     ///
-    /// Resolves shaders by name at runtime so the same code renders correctly
-    /// whether the project uses the Built-in pipeline or URP. Hard-coding
-    /// "Standard" is the usual reason a generated scene comes out magenta.
+    /// Shaders are resolved by name at runtime so the same code renders correctly
+    /// under the Built-in pipeline or URP. Hard-coding "Standard" is the usual
+    /// reason a generated scene comes out magenta.
     /// </summary>
     public sealed class Materials
     {
         private readonly Dictionary<int, Material> _lit = new Dictionary<int, Material>();
         private readonly Dictionary<int, Material> _unlit = new Dictionary<int, Material>();
+        private readonly Dictionary<string, Texture2D> _textures = new Dictionary<string, Texture2D>();
 
         private readonly Shader _litShader;
         private readonly Shader _unlitShader;
@@ -394,17 +501,40 @@ namespace AngryGuy.UnityLayer
 
         public Material Lit(Color colour)
         {
-            return Get(_lit, _litShader, colour);
+            return Get(_lit, _litShader, colour, null, Vector2.one);
         }
 
         public Material Unlit(Color colour)
         {
-            return Get(_unlit, _unlitShader, colour);
+            return Get(_unlit, _unlitShader, colour, null, Vector2.one);
         }
 
-        private Material Get(Dictionary<int, Material> cache, Shader shader, Color colour)
+        public Material Textured(string textureName, Color tint, Vector2 tiling)
         {
-            int key = QuantiseKey(colour);
+            Texture2D texture = LoadTexture(textureName);
+            if (texture == null) return Lit(tint);
+
+            int key = QuantiseKey(tint) * 397 + textureName.GetHashCode()
+                      + Mathf.RoundToInt(tiling.x * 7f) * 31 + Mathf.RoundToInt(tiling.y * 13f);
+
+            return Get(_lit, _litShader, tint, texture, tiling, key);
+        }
+
+        private Texture2D LoadTexture(string name)
+        {
+            Texture2D texture;
+            if (_textures.TryGetValue(name, out texture)) return texture;
+
+            texture = Resources.Load<Texture2D>("Textures/" + name);
+            if (texture != null) texture.wrapMode = TextureWrapMode.Repeat;
+            _textures[name] = texture;
+            return texture;
+        }
+
+        private Material Get(Dictionary<int, Material> cache, Shader shader, Color colour,
+            Texture2D texture, Vector2 tiling, int explicitKey = 0)
+        {
+            int key = explicitKey != 0 ? explicitKey : QuantiseKey(colour);
 
             Material material;
             if (cache.TryGetValue(key, out material) && material != null) return material;
@@ -412,8 +542,20 @@ namespace AngryGuy.UnityLayer
             material = new Material(shader);
             material.color = colour;
 
-            // URP's Lit uses _BaseColor; setting .color alone can be ignored.
+            // URP's Lit uses _BaseColor/_BaseMap; setting .color/.mainTexture alone
+            // is silently ignored there.
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", colour);
+
+            if (texture != null)
+            {
+                material.mainTexture = texture;
+                material.mainTextureScale = tiling;
+                if (material.HasProperty("_BaseMap"))
+                {
+                    material.SetTexture("_BaseMap", texture);
+                    material.SetTextureScale("_BaseMap", tiling);
+                }
+            }
 
             cache[key] = material;
             return material;
@@ -425,7 +567,7 @@ namespace AngryGuy.UnityLayer
             int g = Mathf.RoundToInt(c.g * 32f);
             int b = Mathf.RoundToInt(c.b * 32f);
             int a = Mathf.RoundToInt(c.a * 32f);
-            return ((r * 33 + g) * 33 + b) * 33 + a;
+            return ((r * 33 + g) * 33 + b) * 33 + a + 1;
         }
     }
 }

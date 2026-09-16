@@ -29,6 +29,9 @@ namespace AngryGuy.Core
             public const string Chair = "chair";
             public const string Coffee = "coffee";
             public const string Desk = "desk";
+            public const string Door = "door";
+            public const string Pantry = "pantry";
+            public const string Booth = "booth";
 
             public const string Chef = "chef";
             public const string Waiter = "waiter";
@@ -82,6 +85,9 @@ namespace AngryGuy.Core
             world.Add(BuildToilet());
             world.Add(BuildRadio());
             world.Add(BuildTable());
+            world.Add(BuildDoor(world));
+            world.Add(BuildHidingSpot(Ids.Pantry, "pantry", new Vec3(-8.6f, 0f, 1.6f)));
+            world.Add(BuildHidingSpot(Ids.Booth, "corner booth", new Vec3(8.4f, 0f, 4.6f)));
             world.Add(BuildCoffeeMachine());
             world.Add(BuildDesk());
             world.Add(BuildChair("chair_a", new Vec3(4f, 0f, 2.4f)));
@@ -753,6 +759,78 @@ namespace AngryGuy.Core
         }
 
         /// <summary>
+        /// The swing door in the only gap between kitchen and dining room.
+        /// Shutting it is the cheapest, least incriminating thing in the level:
+        /// it costs nothing, looks like nothing, and blinds half the cast.
+        /// </summary>
+        private static SmartObject BuildDoor(World world)
+        {
+            SmartObject door = At(Ids.Door, "swing door", new Vec3(0f, 0f, 0f));
+            door.Size = new Vec3(0.2f, 2.1f, 2.2f);
+            door.WithTag(Tags.Door).WithState("open", 1f);
+
+            door.WithAffordance(new Affordance
+            {
+                Id = "close_door",
+                Verb = "Close the",
+                Actors = ActorKind.Player,
+                Duration = 0.8f,
+                Noise = 0.25f,
+                Incrimination = 0.05f,
+                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState("open") > 0f; },
+                Effect = delegate(AffordanceContext ctx)
+                {
+                    ctx.Object.SetState("open", 0f);
+                    ctx.Sim.Announce(FeedbackKind.Info, "Door shut - the kitchen can't see the dining room now");
+                }
+            });
+
+            door.WithAffordance(new Affordance
+            {
+                Id = "open_door",
+                Verb = "Open the",
+                Actors = ActorKind.Player,
+                Duration = 0.8f,
+                Noise = 0.25f,
+                Incrimination = 0.05f,
+                Precondition = delegate(SmartObject o, Npc npc) { return o.GetState("open") <= 0f; },
+                Effect = delegate(AffordanceContext ctx) { ctx.Object.SetState("open", 1f); }
+            });
+
+            world.Doors.Add(new DoorBlocker
+            {
+                Object = door,
+                Segment = new Wall(0f, -1.2f, 0f, 1.2f)
+            });
+
+            return door;
+        }
+
+        /// <summary>
+        /// Somewhere to wait out a search. Hiding costs the player all their
+        /// agency while they do it, which is what stops it being a free win.
+        /// </summary>
+        private static SmartObject BuildHidingSpot(string id, string name, Vec3 position)
+        {
+            SmartObject spot = At(id, name, position);
+            spot.Size = new Vec3(1.1f, 1.9f, 1.1f);
+            spot.WithTag(Tags.Hiding);
+
+            spot.WithAffordance(new Affordance
+            {
+                Id = "hide",
+                Verb = "Hide in the",
+                Actors = ActorKind.Player,
+                Duration = 0.6f,
+                Incrimination = 0.25f,
+                Precondition = delegate(SmartObject o, Npc npc) { return true; },
+                Effect = delegate(AffordanceContext ctx) { ctx.Sim.PlayerToggleHide(ctx.Object); }
+            });
+
+            return spot;
+        }
+
+        /// <summary>
         /// Front-of-house needs its own facilities. Without these, Marie and Eva
         /// spend the entire service walking into the kitchen for every need, which
         /// both looks wrong and leaves the dining room empty.
@@ -994,6 +1072,17 @@ namespace AngryGuy.Core
                         Description = "the " + ctx.Object.Name + " is missing"
                     });
                 }
+            });
+
+            obj.WithAffordance(new Affordance
+            {
+                Id = "throw",
+                Verb = "Throw the",
+                Actors = ActorKind.Player,
+                Duration = 0.4f,
+                Incrimination = 0.4f,
+                Precondition = delegate(SmartObject o, Npc npc) { return o.HeldBy == PlayerAvatar.PlayerId; },
+                Effect = delegate(AffordanceContext ctx) { ctx.Sim.PlayerThrow(); }
             });
 
             obj.WithAffordance(new Affordance

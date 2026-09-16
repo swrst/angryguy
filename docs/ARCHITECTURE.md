@@ -154,13 +154,83 @@ Subtle tampering also sets a `subtleTamper` flag so it is excluded from the
 
 ---
 
+## Making it legible
+
+The first playtest verdict was "it runs, but I have no idea what's happening".
+The simulation was fine; none of it reached the player. That is now its own
+layer rather than an afterthought.
+
+`FeedbackQueue` is a single stream of `FeedbackEvent`s carrying a kind, the actor
+it belongs to, a signed amount **on the 0-100 scale players actually read**, and
+a plain-language reason. Both front-ends drain the same queue: Unity turns it
+into floating numbers and toasts, the terminal build prints it. That means the
+headless runner is a fair preview of whether the game reads clearly.
+
+Two rules keep it honest:
+
+- `Simulation.RaiseSuspicion` is the only way suspicion goes up. Calling
+  `Npc.AddSuspicion` directly bypasses the player's only warning that they are
+  being noticed, so nothing does.
+- Anger reports through `NoteAngerChange` for the same reason.
+
+Because one visible action can reach `RaiseSuspicion` down several paths at once
+(the act is seen, *and* the event it publishes is witnessed), repeat hits on the
+same NPC within 1.5s are scaled to a quarter. Without that, one slip stacked
+three penalties and ended the run instantly - which read as the game cheating.
+
+On top of the stream: NPC nameplates show mood and current activity in words, a
+`?`/`!` bubble marks NPCs who have noticed something, vision cones shade green to
+red with suspicion, a banner names anyone who can currently see you, and the
+end-of-level screen replays every action with the ones that were witnessed
+flagged.
+
+---
+
+## Stealth verbs
+
+Beyond direct sabotage the player has four ways to manage attention:
+
+- **Sneaking** (Shift) is quiet and cuts the range at which you can be spotted to
+  45%, but adds to how guilty you look if someone does see you. It is no help at
+  all up close.
+- **Hiding** removes you from sight entirely, at the cost of being unable to move
+  or act until you step out. `Simulation.CanSeePlayer` is the single place all of
+  this is decided, so no caller can forget about it.
+- **Throwing** (T) puts a loud noise somewhere you are not. Unless someone was
+  already watching you, the event carries no actor, so nobody connects it to you.
+- **Doors** block sight and movement while shut. NPCs open them by walking into
+  them - without that, a shut door is a permanent roadblock and the AI stands
+  against it looking broken.
+
+---
+
+## Art and audio
+
+Both are generated, by `tools/assets/generate_audio.py` (17 clips) and
+`tools/assets/generate_textures.py` (5 seamless 256px textures). Synthesised
+rather than downloaded: no licence to track, nothing to attribute, no risk of
+shipping something unsellable, and tunable by changing a number.
+
+Characters are boxes posed entirely in code by `CharacterRig`. Limbs hang off
+unscaled pivot nodes so joints rotate correctly, and the head is an unscaled node
+too - parenting a mesh under a scaled cube multiplies its scale, which silently
+shrinks a 0.1 nose under a 0.34 head to 0.034.
+
+Poses are derived from simulation state every frame, so there is no animation
+state to desync: an NPC scanning the room really is `Investigating`, and one
+flailing its arms really is above the boiling point.
+
+---
+
 ## Unity layer
 
 | File | Job |
 |---|---|
 | `Bootstrap.cs` | builds the game on Play in any empty scene |
 | `SimRunner.cs` | owns the `Simulation`, ticks it, handles interaction channelling |
-| `LevelView.cs` | grey-box primitives, vision cones, colour by anger |
+| `LevelView.cs` | textured surfaces, doors, vision cones, colour by anger |
+| `CharacterRig.cs` | box characters, procedural walk/sit/investigate/rage |
+| `AudioDirector.cs` | sound from events, tension bed driven by suspicion |
 | `PlayerController.cs` | character controller, third/first person camera |
 | `GameHud.cs` | IMGUI HUD, world-space labels, debug overlay |
 
@@ -207,4 +277,8 @@ engine dependency, and it is the only file that should need to change.
   need.
 - **One level's content lives in one static class.** Fine now, will not scale past
   three or four levels.
-- **No save system, audio, or animation.** All deliberate.
+- **No save system or main menu.** Deliberate.
+- **Characters are boxes.** Deliberate for now; `CharacterRig` is the only class
+  that has to change when real models arrive.
+- **`AudioSource.PlayClipAtPoint` allocates** a temporary object per sound. Fine
+  at this scale, worth pooling before shipping.

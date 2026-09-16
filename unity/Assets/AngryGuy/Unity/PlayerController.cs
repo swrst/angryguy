@@ -1,14 +1,16 @@
+using System.Collections.Generic;
 using AngryGuy.Core;
 using UnityEngine;
 
 namespace AngryGuy.UnityLayer
 {
     /// <summary>
-    /// Movement, camera and input. Third person by default because a game about
-    /// not being seen needs you to see yourself and your surroundings; press V
-    /// for first person if you prefer it.
+    /// Movement, camera and input.
     ///
-    /// Holds no game state. It moves a capsule and reports where it ended up.
+    /// Third person by default: a game about not being seen needs you to see
+    /// yourself and what is behind you. Press V for first person.
+    ///
+    /// Holds no game state. It moves a capsule, reads keys, and reports back.
     /// </summary>
     public sealed class PlayerController : MonoBehaviour
     {
@@ -21,10 +23,12 @@ namespace AngryGuy.UnityLayer
         private SimRunner _runner;
         private CharacterController _controller;
         private Camera _camera;
-        private Transform _body;
+        private CharacterRig _rig;
+        private Transform _carried;
+        private Renderer _carriedRenderer;
 
         private float _yaw;
-        private float _pitch = 14f;
+        private float _pitch = 16f;
         private float _verticalVelocity;
         private bool _moving;
         private bool _sneaking;
@@ -32,6 +36,16 @@ namespace AngryGuy.UnityLayer
         public bool Sneaking
         {
             get { return _sneaking; }
+        }
+
+        public bool IsMoving
+        {
+            get { return _moving; }
+        }
+
+        public Camera Camera
+        {
+            get { return _camera; }
         }
 
         public void Attach(SimRunner runner)
@@ -48,24 +62,22 @@ namespace AngryGuy.UnityLayer
                 _controller.stepOffset = 0.4f;
             }
 
-            if (_body == null)
+            if (_rig == null)
             {
-                GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                body.name = "Body";
-                body.transform.SetParent(transform, false);
-                body.transform.localScale = new Vector3(0.7f, 0.85f, 0.7f);
-                body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
-                Destroy(body.GetComponent<Collider>());
+                _rig = new CharacterRig();
+                _rig.Build(transform, "PlayerBody",
+                    new Color(0.22f, 0.4f, 0.8f), new Color(0.9f, 0.74f, 0.62f),
+                    runner.View.Materials, false);
 
-                Renderer renderer = body.GetComponent<Renderer>();
-                Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                Material material = new Material(shader);
-                Color colour = new Color(0.25f, 0.45f, 0.85f);
-                material.color = colour;
-                if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", colour);
-                renderer.sharedMaterial = material;
-
-                _body = body.transform;
+                GameObject carried = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                carried.name = "Carried";
+                carried.transform.SetParent(transform, false);
+                carried.transform.localPosition = new Vector3(0f, 1.05f, 0.45f);
+                carried.transform.localScale = new Vector3(0.28f, 0.28f, 0.28f);
+                Destroy(carried.GetComponent<Collider>());
+                _carried = carried.transform;
+                _carriedRenderer = carried.GetComponent<Renderer>();
+                carried.SetActive(false);
             }
 
             if (_camera == null)
@@ -84,11 +96,10 @@ namespace AngryGuy.UnityLayer
                 }
 
                 _camera.clearFlags = CameraClearFlags.SolidColor;
-                _camera.backgroundColor = new Color(0.16f, 0.18f, 0.22f);
+                _camera.backgroundColor = new Color(0.14f, 0.16f, 0.2f);
                 _camera.nearClipPlane = 0.05f;
             }
 
-            // Drop the capsule where the level put the player.
             _controller.enabled = false;
             transform.position = LevelView.ToUnity(runner.Sim.Player.Position);
             _controller.enabled = true;
@@ -104,38 +115,42 @@ namespace AngryGuy.UnityLayer
             HandleLook();
             HandleMovement();
             HandleInteractionInput();
+            UpdateBody();
         }
 
-        private void LateUpdate()
+        private void UpdateBody()
         {
-            if (_camera == null) return;
+            if (_rig == null) return;
 
-            Vector3 head = transform.position + Vector3.up * 1.6f;
+            Vec3 facing = LevelView.ToSim(transform.forward);
+            _rig.Pose(LevelView.ToSim(transform.position), facing,
+                _moving ? NpcActivity.Walking : NpcActivity.Idle, 0f, false,
+                Time.deltaTime, _runner.View.Materials,
+                new Color(0.22f, 0.4f, 0.8f), new Color(0.9f, 0.74f, 0.62f));
 
-            if (FirstPerson)
+            // Hide our own body in first person, and while hidden in a cupboard.
+            bool showBody = !FirstPerson && !_runner.Sim.Player.IsHidden;
+            if (_rig.Root.gameObject.activeSelf != showBody) _rig.Root.gameObject.SetActive(showBody);
+
+            bool carrying = _runner.Sim.Player.IsCarrying;
+            if (_carried != null && _carried.gameObject.activeSelf != carrying)
             {
-                _camera.transform.position = head + _camera.transform.forward * 0.1f;
-                _camera.transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
-                if (_body != null) _body.gameObject.SetActive(false);
-                return;
+                _carried.gameObject.SetActive(carrying);
             }
 
-            if (_body != null && !_body.gameObject.activeSelf) _body.gameObject.SetActive(true);
-
-            Quaternion orbit = Quaternion.Euler(_pitch, _yaw, 0f);
-            Vector3 offset = orbit * new Vector3(0f, 0f, -5.2f);
-            Vector3 desired = head + offset + Vector3.up * 1.1f;
-
-            // Keep the camera out of walls without a full collision solve.
-            Vector3 direction = desired - head;
-            RaycastHit hit;
-            if (Physics.Raycast(head, direction.normalized, out hit, direction.magnitude + 0.3f))
+            if (carrying && _carriedRenderer != null)
             {
-                desired = hit.point - direction.normalized * 0.3f;
+                SmartObject held = _runner.Sim.World.GetObject(_runner.Sim.Player.CarryingObjectId);
+                if (held != null)
+                {
+                    _carried.localScale = new Vector3(
+                        Mathf.Clamp(held.Size.X, 0.15f, 0.5f),
+                        Mathf.Clamp(held.Size.Y, 0.15f, 0.5f),
+                        Mathf.Clamp(held.Size.Z, 0.15f, 0.5f));
+                    _carriedRenderer.sharedMaterial =
+                        _runner.View.Materials.Lit(new Color(0.9f, 0.85f, 0.5f));
+                }
             }
-
-            _camera.transform.position = desired;
-            _camera.transform.rotation = Quaternion.LookRotation((head - desired).normalized, Vector3.up);
         }
 
         // ------------------------------------------------------------------
@@ -164,6 +179,14 @@ namespace AngryGuy.UnityLayer
 
         private void HandleMovement()
         {
+            // Hiding costs you all your agency until you step back out, which is
+            // what stops it being a free win.
+            if (_runner.Sim.Player.IsHidden)
+            {
+                _moving = false;
+                return;
+            }
+
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
 
@@ -187,7 +210,7 @@ namespace AngryGuy.UnityLayer
             {
                 Quaternion target = Quaternion.LookRotation(move.normalized, Vector3.up);
                 transform.rotation = Quaternion.RotateTowards(
-                    transform.rotation, target, 540f * Time.deltaTime);
+                    transform.rotation, target, 620f * Time.deltaTime);
             }
             else if (FirstPerson)
             {
@@ -203,24 +226,101 @@ namespace AngryGuy.UnityLayer
                 return;
             }
 
-            var interactions = _runner.Interactions;
-            if (interactions.Count == 0) return;
-
-            if (Input.GetKeyDown(KeyCode.E))
+            // Throwing is its own key because it is the one verb you want to use
+            // while already running away.
+            if (Input.GetKeyDown(KeyCode.T) && _runner.Sim.Player.IsCarrying)
             {
-                _runner.BeginInteraction(interactions[0]);
+                _runner.Sim.PlayerThrow();
                 return;
             }
 
-            // Number keys pick straight off the prompt list.
-            for (int i = 0; i < interactions.Count && i < 9; i++)
+            if (Input.GetKeyDown(KeyCode.F))
+            {
+                ToggleHide();
+                return;
+            }
+
+            List<InteractionOption> options = _runner.FocusedOptions();
+            if (options.Count == 0) return;
+
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                _runner.BeginInteraction(options[0]);
+                return;
+            }
+
+            for (int i = 0; i < options.Count && i < 9; i++)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + i))
                 {
-                    _runner.BeginInteraction(interactions[i]);
+                    _runner.BeginInteraction(options[i]);
                     return;
                 }
             }
+        }
+
+        private void ToggleHide()
+        {
+            if (_runner.Sim.Player.IsHidden)
+            {
+                _runner.Sim.PlayerToggleHide(null);
+                return;
+            }
+
+            SmartObject nearest = null;
+            float best = float.MaxValue;
+            List<SmartObject> objects = _runner.Sim.World.Objects;
+
+            for (int i = 0; i < objects.Count; i++)
+            {
+                if (!objects[i].HasTag(Tags.Hiding)) continue;
+                float distance = Vec3.FlatDistance(objects[i].Position, _runner.Sim.Player.Position);
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = objects[i];
+                }
+            }
+
+            if (nearest != null && best <= 2.2f)
+            {
+                _runner.Sim.PlayerToggleHide(nearest);
+                _controller.enabled = false;
+                transform.position = LevelView.ToUnity(_runner.Sim.Player.Position);
+                _controller.enabled = true;
+            }
+            else
+            {
+                _runner.PushToast("Nothing to hide in here.", new Color(0.8f, 0.8f, 0.85f), 2.5f);
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (_camera == null) return;
+
+            Vector3 head = transform.position + Vector3.up * 1.62f;
+
+            if (FirstPerson)
+            {
+                _camera.transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+                _camera.transform.position = head + _camera.transform.forward * 0.12f;
+                return;
+            }
+
+            Quaternion orbit = Quaternion.Euler(_pitch, _yaw, 0f);
+            Vector3 desired = head + orbit * new Vector3(0.45f, 0f, -5.0f) + Vector3.up * 1.0f;
+
+            // Keep the camera out of walls without a full collision solve.
+            Vector3 direction = desired - head;
+            RaycastHit hit;
+            if (Physics.Raycast(head, direction.normalized, out hit, direction.magnitude + 0.3f))
+            {
+                desired = hit.point - direction.normalized * 0.3f;
+            }
+
+            _camera.transform.position = desired;
+            _camera.transform.rotation = Quaternion.LookRotation((head - desired).normalized, Vector3.up);
         }
 
         /// <summary>Tell the simulation where the player ended up this frame.</summary>
@@ -236,11 +336,6 @@ namespace AngryGuy.UnityLayer
 
             sim.Player.WalkSpeed = WalkSpeed;
             sim.Player.SneakSpeed = SneakSpeed;
-        }
-
-        public Camera Camera
-        {
-            get { return _camera; }
         }
     }
 }
